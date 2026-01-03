@@ -481,7 +481,8 @@ async function fetchStockData(symbol) {
     try {
         // Use Alpha Vantage API (free tier)
         // Note: In production, you'd want to use your own API key
-        const apiKey = 'demo'; // Replace with your API key
+        // Get a free API key from: https://www.alphavantage.co/support/#api-key
+        const apiKey = 'demo'; // Replace with your API key for better rate limits
         const baseUrl = 'https://www.alphavantage.co/query';
 
         // Fetch multiple data points in parallel
