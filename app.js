@@ -565,61 +565,39 @@ async function fetchStockDataFinnhub(symbol) {
 // Primary: Yahoo Finance API (free, no key required)
 async function fetchStockDataYahoo(symbol) {
     try {
-        // Use reliable CORS proxies - try multiple until one works
-        const proxies = [
-            'https://api.allorigins.win/raw?url=',
-            'https://corsproxy.io/?',
-            'https://api.codetabs.com/v1/proxy?quest='
-        ];
-        
+        // Use allorigins.win - most reliable free CORS proxy
+        const proxy = 'https://api.allorigins.win/raw?url=';
         const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&includePrePost=false`;
+        const fullUrl = proxy + encodeURIComponent(yahooUrl);
         
-        let data = null;
-        let lastError = null;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         
-        // Try each proxy with timeout
-        for (const proxy of proxies) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-                
-                let fullUrl;
-                if (proxy.includes('allorigins')) {
-                    fullUrl = proxy + encodeURIComponent(yahooUrl);
-                } else if (proxy.includes('codetabs')) {
-                    fullUrl = proxy + encodeURIComponent(yahooUrl);
-                } else {
-                    fullUrl = proxy + yahooUrl;
-                }
-                
-                const response = await fetch(fullUrl, {
-                    signal: controller.signal,
-                    headers: {
-                        'Accept': 'application/json'
-                    }
-                });
-                
-                clearTimeout(timeoutId);
-                
-                if (response.ok) {
-                    const responseData = await response.json();
-                    // Handle allorigins wrapper
-                    if (responseData.contents) {
-                        data = JSON.parse(responseData.contents);
-                    } else {
-                        data = responseData;
-                    }
-                    
-                    if (data.chart && data.chart.result && data.chart.result[0]) {
-                        break; // Success, exit loop
-                    }
-                }
-            } catch (error) {
-                if (error.name !== 'AbortError') {
-                    lastError = error;
-                }
-                continue; // Try next proxy
+        const response = await fetch(fullUrl, {
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json'
             }
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        let responseData = await response.json();
+        
+        // allorigins wraps the response
+        let data;
+        if (responseData.contents) {
+            try {
+                data = JSON.parse(responseData.contents);
+            } catch (e) {
+                data = responseData.contents;
+            }
+        } else {
+            data = responseData;
         }
 
         if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
