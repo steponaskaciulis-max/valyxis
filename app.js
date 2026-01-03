@@ -652,32 +652,32 @@ function parseYahooData(data, symbol) {
     const change = price - previousClose;
     const changePercent = previousClose && previousClose > 0 ? (change / previousClose) * 100 : 0;
 
-        // Build historical data
-        const historicalData = [];
-        for (let i = 0; i < timestamps.length; i++) {
-            if (closes[i] !== null && closes[i] !== undefined && closes[i] > 0) {
-                historicalData.push({
-                    date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
-                    close: closes[i]
-                });
-            }
+    // Build historical data
+    const historicalData = [];
+    for (let i = 0; i < timestamps.length; i++) {
+        if (closes[i] !== null && closes[i] !== undefined && closes[i] > 0) {
+            historicalData.push({
+                date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+                close: closes[i]
+            });
         }
+    }
 
-        // Calculate 1W and 1M changes
-        let change1W = 0;
-        let change1M = 0;
-        if (historicalData.length >= 5) {
-            const weekAgoPrice = historicalData[Math.max(0, historicalData.length - 5)].close;
-            if (weekAgoPrice && weekAgoPrice > 0) {
-                change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
-            }
+    // Calculate 1W and 1M changes
+    let change1W = 0;
+    let change1M = 0;
+    if (historicalData.length >= 5) {
+        const weekAgoPrice = historicalData[Math.max(0, historicalData.length - 5)].close;
+        if (weekAgoPrice && weekAgoPrice > 0) {
+            change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
         }
-        if (historicalData.length >= 20) {
-            const monthAgoPrice = historicalData[Math.max(0, historicalData.length - 20)].close;
-            if (monthAgoPrice && monthAgoPrice > 0) {
-                change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
-            }
+    }
+    if (historicalData.length >= 20) {
+        const monthAgoPrice = historicalData[Math.max(0, historicalData.length - 20)].close;
+        if (monthAgoPrice && monthAgoPrice > 0) {
+            change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
         }
+    }
 
     // Fetch additional company info (non-blocking, don't wait)
     let sector = 'N/A';
@@ -745,11 +745,6 @@ function parseYahooData(data, symbol) {
     };
 
     return stockData;
-}
-    } catch (error) {
-        console.error(`Error fetching Yahoo data for ${symbol}:`, error);
-        throw error;
-    }
 }
 
 // Fallback: Alpha Vantage API
