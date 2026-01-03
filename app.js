@@ -239,13 +239,35 @@ function loadWatchlistStocks(stocks) {
     container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
 
     // Fetch all stock data in parallel
-    Promise.all(stocks.map(symbol => fetchStockData(symbol)))
+    Promise.all(stocks.map(symbol => fetchStockData(symbol).catch(err => {
+        console.error(`Error fetching ${symbol}:`, err);
+        return null;
+    })))
         .then(results => {
-            displayStocks(results.filter(r => r !== null));
+            const validResults = results.filter(r => r !== null && r !== undefined);
+            if (validResults.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <div class="empty-state-icon">⚠️</div>
+                        <h3>Unable to Load Stock Data</h3>
+                        <p>Please check your internet connection and try refreshing. The API may be temporarily unavailable.</p>
+                        <button class="btn btn-primary" onclick="refreshStocks()" style="margin-top: 1rem;">Retry</button>
+                    </div>
+                `;
+            } else {
+                displayStocks(validResults);
+            }
         })
         .catch(error => {
             console.error('Error loading stocks:', error);
-            container.innerHTML = '<div class="empty-state"><p>Error loading stocks. Please try again.</p></div>';
+            container.innerHTML = `
+                <div class="empty-state" style="grid-column: 1 / -1;">
+                    <div class="empty-state-icon">⚠️</div>
+                    <h3>Error Loading Stocks</h3>
+                    <p>${error.message || 'Please try again in a moment.'}</p>
+                    <button class="btn btn-primary" onclick="refreshStocks()" style="margin-top: 1rem;">Retry</button>
+                </div>
+            `;
         });
 }
 
