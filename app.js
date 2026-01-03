@@ -540,120 +540,32 @@ async function fetchStockData(symbol) {
         return cached.data;
     }
 
+    // Try Yahoo Finance first (most reliable with proper proxy)
     try {
-        // Primary: Use Finnhub API (free, CORS enabled, more reliable)
-        return await fetchStockDataFinnhub(symbol);
+        return await fetchStockDataYahoo(symbol);
     } catch (error) {
-        console.error(`Error fetching Finnhub data for ${symbol}:`, error);
-        // Fallback: Try Yahoo Finance
+        console.error(`Error fetching Yahoo data for ${symbol}:`, error);
+        // Fallback: Try Alpha Vantage
         try {
-            return await fetchStockDataYahoo(symbol);
+            return await fetchStockDataAlphaVantage(symbol);
         } catch (error2) {
-            console.error(`Error fetching Yahoo data for ${symbol}:`, error2);
-            // Last resort: Alpha Vantage
-            try {
-                return await fetchStockDataAlphaVantage(symbol);
-            } catch (error3) {
-                console.error(`Error fetching Alpha Vantage data for ${symbol}:`, error3);
-                return null;
-            }
+            console.error(`Error fetching Alpha Vantage data for ${symbol}:`, error2);
+            return null;
         }
     }
 }
 
-// Primary: Finnhub API (free, CORS enabled, reliable)
+// Primary: Use a working CORS proxy with Yahoo Finance
 async function fetchStockDataFinnhub(symbol) {
-    try {
-        // Finnhub free API key (60 calls/minute limit)
-        const apiKey = 'cmt8bq9r01qj8q8l8hkgcmt8bq9r01qj8q8l8hk0';
-        const baseUrl = 'https://finnhub.io/api/v1';
-        
-        // Fetch quote and company profile in parallel
-        const [quoteResponse, profileResponse, candleResponse] = await Promise.all([
-            fetch(`${baseUrl}/quote?symbol=${symbol}&token=${apiKey}`),
-            fetch(`${baseUrl}/stock/profile2?symbol=${symbol}&token=${apiKey}`),
-            fetch(`${baseUrl}/stock/candle?symbol=${symbol}&resolution=D&from=${Math.floor(Date.now() / 1000) - 90 * 24 * 60 * 60}&to=${Math.floor(Date.now() / 1000)}&token=${apiKey}`)
-        ]);
-        
-        if (!quoteResponse.ok || !profileResponse.ok) {
-            throw new Error('Finnhub API error');
-        }
-        
-        const quote = await quoteResponse.json();
-        const profile = await profileResponse.json();
-        const candle = candleResponse.ok ? await candleResponse.json() : { c: [] };
-        
-        const price = quote.c || quote.pc || 0; // current price or previous close
-        const previousClose = quote.pc || price;
-        const change = price - previousClose;
-        const changePercent = previousClose ? (change / previousClose) * 100 : 0;
-        
-        // Calculate 1W and 1M changes from candle data
-        let change1W = 0;
-        let change1M = 0;
-        const closes = candle.c || [];
-        const timestamps = candle.t || [];
-        
-        if (closes.length >= 5) {
-            const weekAgoPrice = closes[closes.length - 5];
-            if (weekAgoPrice) {
-                change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
-            }
-        }
-        if (closes.length >= 20) {
-            const monthAgoPrice = closes[closes.length - 20];
-            if (monthAgoPrice) {
-                change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
-            }
-        }
-        
-        // Build historical data
-        const historicalData = [];
-        for (let i = 0; i < timestamps.length; i++) {
-            if (closes[i] !== null && closes[i] !== undefined) {
-                historicalData.push({
-                    date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
-                    close: closes[i]
-                });
-            }
-        }
-        
-        // Get 52W high from quote
-        const high52Week = quote.h || Math.max(...closes.filter(c => c)) || price;
-        
-        const stockData = {
-            symbol: symbol,
-            companyName: profile.name || symbol,
-            price: price,
-            change1D: changePercent,
-            change1W: change1W,
-            change1M: change1M,
-            sector: profile.finnhubIndustry || profile.industry || 'N/A',
-            peRatio: null, // Finnhub free tier doesn't include this
-            pegRatio: null,
-            eps: null,
-            dividendYield: null,
-            high52Week: high52Week,
-            historicalData: historicalData.slice(-30)
-        };
-        
-        // Cache the data
-        stockDataCache[cacheKey] = {
-            data: stockData,
-            timestamp: Date.now()
-        };
-        
-        return stockData;
-    } catch (error) {
-        console.error(`Error fetching Finnhub data for ${symbol}:`, error);
-        throw error;
-    }
+    // This function name is kept for compatibility but uses Yahoo Finance
+    // through a reliable proxy
+    throw new Error('Use Yahoo instead');
 }
 
-// Fallback: Yahoo Finance API (free, no key required)
+// Primary: Yahoo Finance API (free, no key required)
 async function fetchStockDataYahoo(symbol) {
     try {
-        // Use multiple CORS proxies for reliability
+        // Use reliable CORS proxies - try multiple until one works
         const proxies = [
             'https://api.allorigins.win/raw?url=',
             'https://corsproxy.io/?',
@@ -665,23 +577,47 @@ async function fetchStockDataYahoo(symbol) {
         let data = null;
         let lastError = null;
         
-        // Try each proxy
+        // Try each proxy with timeout
         for (const proxy of proxies) {
             try {
-                const response = await fetch(proxy + encodeURIComponent(yahooUrl), {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+                
+                let fullUrl;
+                if (proxy.includes('allorigins')) {
+                    fullUrl = proxy + encodeURIComponent(yahooUrl);
+                } else if (proxy.includes('codetabs')) {
+                    fullUrl = proxy + encodeURIComponent(yahooUrl);
+                } else {
+                    fullUrl = proxy + yahooUrl;
+                }
+                
+                const response = await fetch(fullUrl, {
+                    signal: controller.signal,
                     headers: {
                         'Accept': 'application/json'
                     }
                 });
                 
+                clearTimeout(timeoutId);
+                
                 if (response.ok) {
-                    data = await response.json();
+                    const responseData = await response.json();
+                    // Handle allorigins wrapper
+                    if (responseData.contents) {
+                        data = JSON.parse(responseData.contents);
+                    } else {
+                        data = responseData;
+                    }
+                    
                     if (data.chart && data.chart.result && data.chart.result[0]) {
                         break; // Success, exit loop
                     }
                 }
             } catch (error) {
-                lastError = error;
+                if (error.name !== 'AbortError') {
+                    lastError = error;
+                }
                 continue; // Try next proxy
             }
         }
@@ -695,11 +631,12 @@ async function fetchStockDataYahoo(symbol) {
         const timestamps = result.timestamp || [];
         const quotes = result.indicators.quote[0];
         const closes = quotes.close || [];
-        const opens = quotes.open || [];
-        const highs = quotes.high || [];
-        const lows = quotes.low || [];
 
         const price = meta.regularMarketPrice || meta.previousClose || (closes[closes.length - 1] || 0);
+        if (!price || price === 0) {
+            throw new Error('Invalid price data');
+        }
+        
         const previousClose = meta.previousClose || (closes[closes.length - 2] || price);
         const change = price - previousClose;
         const changePercent = previousClose ? (change / previousClose) * 100 : 0;
@@ -707,7 +644,7 @@ async function fetchStockDataYahoo(symbol) {
         // Build historical data
         const historicalData = [];
         for (let i = 0; i < timestamps.length; i++) {
-            if (closes[i] !== null && closes[i] !== undefined) {
+            if (closes[i] !== null && closes[i] !== undefined && closes[i] > 0) {
                 historicalData.push({
                     date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
                     close: closes[i]
@@ -720,18 +657,18 @@ async function fetchStockDataYahoo(symbol) {
         let change1M = 0;
         if (historicalData.length >= 5) {
             const weekAgoPrice = historicalData[Math.max(0, historicalData.length - 5)].close;
-            if (weekAgoPrice) {
+            if (weekAgoPrice && weekAgoPrice > 0) {
                 change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
             }
         }
         if (historicalData.length >= 20) {
             const monthAgoPrice = historicalData[Math.max(0, historicalData.length - 20)].close;
-            if (monthAgoPrice) {
+            if (monthAgoPrice && monthAgoPrice > 0) {
                 change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
             }
         }
 
-        // Fetch additional company info
+        // Fetch additional company info (non-blocking)
         let sector = 'N/A';
         let peRatio = null;
         let pegRatio = null;
@@ -740,9 +677,16 @@ async function fetchStockDataYahoo(symbol) {
         
         try {
             const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData`;
-            const summaryResponse = await fetch(proxies[0] + encodeURIComponent(summaryUrl));
+            const proxyForSummary = proxies.find(p => p.includes('allorigins')) || proxies[0];
+            const summaryFullUrl = proxyForSummary.includes('allorigins') 
+                ? proxyForSummary + encodeURIComponent(summaryUrl)
+                : proxyForSummary + summaryUrl;
+            
+            const summaryResponse = await fetch(summaryFullUrl, { signal: AbortSignal.timeout(5000) });
             if (summaryResponse.ok) {
-                const summaryData = await summaryResponse.json();
+                const summaryDataRaw = await summaryResponse.json();
+                const summaryData = summaryDataRaw.contents ? JSON.parse(summaryDataRaw.contents) : summaryDataRaw;
+                
                 if (summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
                     const summary = summaryData.quoteSummary.result[0];
                     sector = summary.summaryProfile?.sector || 'N/A';
@@ -753,8 +697,11 @@ async function fetchStockDataYahoo(symbol) {
                 }
             }
         } catch (e) {
-            console.log('Could not fetch additional info, using defaults');
+            // Non-critical, continue with defaults
+            console.log('Additional info not available, using defaults');
         }
+
+        const high52Week = meta.fiftyTwoWeekHigh || (historicalData.length > 0 ? Math.max(...historicalData.map(d => d.close)) : price);
 
         const stockData = {
             symbol: symbol,
@@ -768,7 +715,7 @@ async function fetchStockDataYahoo(symbol) {
             pegRatio: pegRatio,
             eps: eps,
             dividendYield: dividendYield,
-            high52Week: meta.fiftyTwoWeekHigh || Math.max(...closes.filter(c => c)) || price,
+            high52Week: high52Week,
             historicalData: historicalData.slice(-30)
         };
 
