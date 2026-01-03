@@ -531,26 +531,32 @@ async function searchStockByName(query) {
     return null;
 }
 
-// Stock Data Fetching
+// Stock Data Fetching - Simplified and reliable
 async function fetchStockData(symbol) {
-    // Check cache first (2 minute cache for real-time feel)
+    // Check cache first (2 minute cache)
     const cacheKey = symbol;
     const cached = stockDataCache[cacheKey];
     if (cached && Date.now() - cached.timestamp < 120000) {
         return cached.data;
     }
 
-    // Try Yahoo Finance first (most reliable with proper proxy)
+    // Try direct proxy method first (most reliable)
     try {
-        return await fetchStockDataYahoo(symbol);
-    } catch (error) {
-        console.error(`Error fetching Yahoo data for ${symbol}:`, error);
-        // Fallback: Try Alpha Vantage
+        return await fetchStockDataDirect(symbol);
+    } catch (error1) {
+        console.error('Direct method failed:', error1);
+        // Try serverless function
         try {
-            return await fetchStockDataAlphaVantage(symbol);
+            return await fetchStockDataYahoo(symbol);
         } catch (error2) {
-            console.error(`Error fetching Alpha Vantage data for ${symbol}:`, error2);
-            return null;
+            console.error('Serverless method failed:', error2);
+            // Last resort: Alpha Vantage
+            try {
+                return await fetchStockDataAlphaVantage(symbol);
+            } catch (error3) {
+                console.error('All methods failed:', error3);
+                return null;
+            }
         }
     }
 }
@@ -562,44 +568,73 @@ async function fetchStockDataFinnhub(symbol) {
     throw new Error('Use Yahoo instead');
 }
 
-// Primary: Use Vercel serverless function (no CORS issues)
-async function fetchStockDataYahoo(symbol) {
+// Direct fetch with proxy (most reliable)
+async function fetchStockDataDirect(symbol) {
+    const proxy = 'https://api.allorigins.win/raw?url=';
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&includePrePost=false`;
+    const fullUrl = proxy + encodeURIComponent(yahooUrl);
+    
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    
     try {
-        // Use our Vercel API endpoint (no CORS issues)
-        const baseUrl = window.location.origin;
-        const chartUrl = `${baseUrl}/api/stock?symbol=${symbol}`;
-        
-        let response;
-        try {
-            response = await fetch(chartUrl, {
-                headers: {
-                    'Accept': 'application/json'
-                }
-            });
-        } catch (e) {
-            // Fallback to proxy if serverless function not available
-            const proxy = 'https://api.allorigins.win/raw?url=';
-            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&includePrePost=false`;
-            response = await fetch(proxy + encodeURIComponent(yahooUrl));
-        }
+        const response = await fetch(fullUrl, { signal: controller.signal });
+        clearTimeout(timeout);
         
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
         
-        let responseData = await response.json();
-        
-        // Handle allorigins wrapper if used
+        const responseData = await response.json();
         let data;
+        
         if (responseData.contents) {
             try {
-                data = JSON.parse(responseData.contents);
+                data = typeof responseData.contents === 'string' 
+                    ? JSON.parse(responseData.contents) 
+                    : responseData.contents;
             } catch (e) {
-                data = responseData.contents;
+                throw new Error('Failed to parse response');
             }
         } else {
             data = responseData;
         }
+        
+        return parseYahooData(data, symbol);
+    } catch (error) {
+        clearTimeout(timeout);
+        throw error;
+    }
+}
+
+// Primary: Use Vercel serverless function or proxy
+async function fetchStockDataYahoo(symbol) {
+    try {
+        // Try serverless function first
+        const baseUrl = window.location.origin;
+        const chartUrl = `${baseUrl}/api/stock?symbol=${symbol}`;
+        
+        const response = await fetch(chartUrl, {
+            headers: { 'Accept': 'application/json' }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            return parseYahooData(data, symbol);
+        }
+    } catch (e) {
+        console.log('Serverless function not available, using direct method');
+    }
+    
+    // Fallback to direct proxy
+    return await fetchStockDataDirect(symbol);
+}
+
+// Parse Yahoo Finance data
+function parseYahooData(data, symbol) {
+    if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
+        throw new Error('Invalid data structure');
+    }
 
         if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
             throw new Error('No data from Yahoo Finance');
