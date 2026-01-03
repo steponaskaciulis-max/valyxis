@@ -420,14 +420,24 @@ async function addStockToWatchlist() {
     addBtn.textContent = 'Adding...';
 
     try {
-        const stockData = await fetchStockData(symbolOrName);
+        // First try as ticker symbol
+        let stockData = await fetchStockData(symbolOrName);
+        
+        // If not found and it looks like a company name, try to search
+        if (!stockData && symbolOrName.length > 2 && !symbolOrName.match(/^[A-Z]{1,5}$/)) {
+            const searchResult = await searchStockByName(symbolOrName);
+            if (searchResult) {
+                stockData = await fetchStockData(searchResult);
+            }
+        }
+        
         if (stockData && stockData.symbol) {
             watchlist.stocks.push(stockData.symbol);
             saveWatchlists();
             input.value = '';
             loadWatchlistStocks(watchlist.stocks);
         } else {
-            alert('Stock not found. Please check the ticker symbol.');
+            alert('Stock not found. Please check the ticker symbol or company name.');
         }
     } catch (error) {
         console.error('Error adding stock:', error);
@@ -469,73 +479,157 @@ function stopAutoRefresh() {
     }
 }
 
+// Search stock by company name
+async function searchStockByName(query) {
+    try {
+        const proxyUrl = 'https://api.allorigins.win/raw?url=';
+        const searchUrl = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=1&newsCount=0`;
+        
+        const response = await fetch(proxyUrl + encodeURIComponent(searchUrl));
+        const data = await response.json();
+        
+        if (data.quotes && data.quotes.length > 0) {
+            return data.quotes[0].symbol;
+        }
+    } catch (error) {
+        console.error('Error searching stock:', error);
+    }
+    return null;
+}
+
 // Stock Data Fetching
 async function fetchStockData(symbol) {
-    // Check cache first (5 minute cache)
+    // Check cache first (2 minute cache for real-time feel)
     const cacheKey = symbol;
     const cached = stockDataCache[cacheKey];
-    if (cached && Date.now() - cached.timestamp < 300000) {
+    if (cached && Date.now() - cached.timestamp < 120000) {
         return cached.data;
     }
 
     try {
-        // Use Alpha Vantage API (free tier)
-        // Note: In production, you'd want to use your own API key
-        // Get a free API key from: https://www.alphavantage.co/support/#api-key
-        const apiKey = 'demo'; // Replace with your API key for better rate limits
-        const baseUrl = 'https://www.alphavantage.co/query';
+        // Primary: Use Yahoo Finance API (free, no key required)
+        return await fetchStockDataYahoo(symbol);
+    } catch (error) {
+        console.error(`Error fetching Yahoo data for ${symbol}:`, error);
+        // Fallback: Try Alpha Vantage with demo key
+        try {
+            return await fetchStockDataAlphaVantage(symbol);
+        } catch (error2) {
+            console.error(`Error fetching Alpha Vantage data for ${symbol}:`, error2);
+            return null;
+        }
+    }
+}
 
-        // Fetch multiple data points in parallel
-        const [quoteData, overviewData, timeSeriesData] = await Promise.all([
-            fetch(`${baseUrl}?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`).then(r => r.json()),
-            fetch(`${baseUrl}?function=OVERVIEW&symbol=${symbol}&apikey=${apiKey}`).then(r => r.json()),
-            fetch(`${baseUrl}?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}&outputsize=compact`).then(r => r.json())
-        ]);
+// Primary: Yahoo Finance API (free, no key required)
+async function fetchStockDataYahoo(symbol) {
+    try {
+        // Use multiple CORS proxies for reliability
+        const proxies = [
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?',
+            'https://api.codetabs.com/v1/proxy?quest='
+        ];
+        
+        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&includePrePost=false`;
+        
+        let data = null;
+        let lastError = null;
+        
+        // Try each proxy
+        for (const proxy of proxies) {
+            try {
+                const response = await fetch(proxy + encodeURIComponent(yahooUrl), {
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    data = await response.json();
+                    if (data.chart && data.chart.result && data.chart.result[0]) {
+                        break; // Success, exit loop
+                    }
+                }
+            } catch (error) {
+                lastError = error;
+                continue; // Try next proxy
+            }
+        }
 
-        // Parse quote data
-        const quote = quoteData['Global Quote'] || {};
-        const price = parseFloat(quote['05. price']) || 0;
-        const change = parseFloat(quote['09. change']) || 0;
-        const changePercent = parseFloat(quote['10. change percent']?.replace('%', '')) || 0;
+        if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
+            throw new Error('No data from Yahoo Finance');
+        }
 
-        // Parse overview data
-        const sector = overviewData.Sector || 'N/A';
-        const companyName = overviewData.Name || symbol;
-        const peRatio = parseFloat(overviewData.PERatio) || null;
-        const pegRatio = parseFloat(overviewData.PEGRatio) || null;
-        const eps = parseFloat(overviewData.EPS) || null;
-        const dividendYield = parseFloat(overviewData.DividendYield) || null;
-        const high52Week = parseFloat(overviewData['52WeekHigh']) || price;
+        const result = data.chart.result[0];
+        const meta = result.meta;
+        const timestamps = result.timestamp || [];
+        const quotes = result.indicators.quote[0];
+        const closes = quotes.close || [];
+        const opens = quotes.open || [];
+        const highs = quotes.high || [];
+        const lows = quotes.low || [];
 
-        // Parse time series data
-        let historicalData = [];
+        const price = meta.regularMarketPrice || meta.previousClose || (closes[closes.length - 1] || 0);
+        const previousClose = meta.previousClose || (closes[closes.length - 2] || price);
+        const change = price - previousClose;
+        const changePercent = previousClose ? (change / previousClose) * 100 : 0;
+
+        // Build historical data
+        const historicalData = [];
+        for (let i = 0; i < timestamps.length; i++) {
+            if (closes[i] !== null && closes[i] !== undefined) {
+                historicalData.push({
+                    date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+                    close: closes[i]
+                });
+            }
+        }
+
+        // Calculate 1W and 1M changes
         let change1W = 0;
         let change1M = 0;
-
-        if (timeSeriesData['Time Series (Daily)']) {
-            const timeSeries = timeSeriesData['Time Series (Daily)'];
-            const dates = Object.keys(timeSeries).sort();
-            
-            // Get data points for spark chart (last 30 days)
-            historicalData = dates.slice(-30).map(date => ({
-                date: date,
-                close: parseFloat(timeSeries[date]['4. close'])
-            }));
-
-            // Calculate 1W and 1M changes
-            if (dates.length >= 5) {
-                const weekAgoPrice = parseFloat(timeSeries[dates[dates.length - 5]]['4. close']);
+        if (historicalData.length >= 5) {
+            const weekAgoPrice = historicalData[Math.max(0, historicalData.length - 5)].close;
+            if (weekAgoPrice) {
                 change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
             }
-            if (dates.length >= 20) {
-                const monthAgoPrice = parseFloat(timeSeries[dates[dates.length - 20]]['4. close']);
+        }
+        if (historicalData.length >= 20) {
+            const monthAgoPrice = historicalData[Math.max(0, historicalData.length - 20)].close;
+            if (monthAgoPrice) {
                 change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
             }
         }
 
+        // Fetch additional company info
+        let sector = 'N/A';
+        let peRatio = null;
+        let pegRatio = null;
+        let eps = null;
+        let dividendYield = null;
+        
+        try {
+            const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData`;
+            const summaryResponse = await fetch(proxies[0] + encodeURIComponent(summaryUrl));
+            if (summaryResponse.ok) {
+                const summaryData = await summaryResponse.json();
+                if (summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
+                    const summary = summaryData.quoteSummary.result[0];
+                    sector = summary.summaryProfile?.sector || 'N/A';
+                    peRatio = summary.defaultKeyStatistics?.trailingPE || null;
+                    pegRatio = summary.defaultKeyStatistics?.pegRatio || null;
+                    eps = summary.defaultKeyStatistics?.trailingEps || null;
+                    dividendYield = summary.summaryDetail?.dividendYield ? summary.summaryDetail.dividendYield * 100 : null;
+                }
+            }
+        } catch (e) {
+            console.log('Could not fetch additional info, using defaults');
+        }
+
         const stockData = {
             symbol: symbol,
-            companyName: companyName,
+            companyName: meta.longName || meta.shortName || symbol,
             price: price,
             change1D: changePercent,
             change1W: change1W,
@@ -544,9 +638,9 @@ async function fetchStockData(symbol) {
             peRatio: peRatio,
             pegRatio: pegRatio,
             eps: eps,
-            dividendYield: dividendYield ? dividendYield * 100 : null,
-            high52Week: high52Week,
-            historicalData: historicalData
+            dividendYield: dividendYield,
+            high52Week: meta.fiftyTwoWeekHigh || Math.max(...closes.filter(c => c)) || price,
+            historicalData: historicalData.slice(-30)
         };
 
         // Cache the data
@@ -557,75 +651,79 @@ async function fetchStockData(symbol) {
 
         return stockData;
     } catch (error) {
-        console.error(`Error fetching data for ${symbol}:`, error);
-        // Fallback: try Yahoo Finance API via proxy
-        return await fetchStockDataYahoo(symbol);
+        console.error(`Error fetching Yahoo data for ${symbol}:`, error);
+        throw error;
     }
 }
 
-// Fallback to Yahoo Finance API
-async function fetchStockDataYahoo(symbol) {
-    try {
-        // Using a CORS proxy for Yahoo Finance
-        const proxyUrl = 'https://api.allorigins.win/raw?url=';
-        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1mo`;
+// Fallback: Alpha Vantage API
+async function fetchStockDataAlphaVantage(symbol) {
+    const apiKey = 'demo';
+    const baseUrl = 'https://www.alphavantage.co/query';
+
+    const [quoteData, overviewData, timeSeriesData] = await Promise.all([
+        fetch(`${baseUrl}?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${apiKey}`).then(r => r.json()),
+        fetch(`${baseUrl}?function=OVERVIEW&symbol=${symbol}&apikey=${apiKey}`).then(r => r.json()),
+        fetch(`${baseUrl}?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}&outputsize=compact`).then(r => r.json())
+    ]);
+
+    const quote = quoteData['Global Quote'] || {};
+    const price = parseFloat(quote['05. price']) || 0;
+    const changePercent = parseFloat(quote['10. change percent']?.replace('%', '')) || 0;
+
+    const sector = overviewData.Sector || 'N/A';
+    const companyName = overviewData.Name || symbol;
+    const peRatio = parseFloat(overviewData.PERatio) || null;
+    const pegRatio = parseFloat(overviewData.PEGRatio) || null;
+    const eps = parseFloat(overviewData.EPS) || null;
+    const dividendYield = parseFloat(overviewData.DividendYield) || null;
+    const high52Week = parseFloat(overviewData['52WeekHigh']) || price;
+
+    let historicalData = [];
+    let change1W = 0;
+    let change1M = 0;
+
+    if (timeSeriesData['Time Series (Daily)']) {
+        const timeSeries = timeSeriesData['Time Series (Daily)'];
+        const dates = Object.keys(timeSeries).sort();
         
-        const response = await fetch(proxyUrl + encodeURIComponent(yahooUrl));
-        const data = await response.json();
+        historicalData = dates.slice(-30).map(date => ({
+            date: date,
+            close: parseFloat(timeSeries[date]['4. close'])
+        }));
 
-        if (data.chart && data.chart.result && data.chart.result[0]) {
-            const result = data.chart.result[0];
-            const meta = result.meta;
-            const timestamps = result.timestamp;
-            const closes = result.indicators.quote[0].close;
-
-            const price = meta.regularMarketPrice || meta.previousClose || 0;
-            const change = meta.regularMarketPrice - meta.previousClose || 0;
-            const changePercent = (change / meta.previousClose) * 100 || 0;
-
-            // Build historical data
-            const historicalData = [];
-            for (let i = 0; i < timestamps.length; i++) {
-                if (closes[i] !== null) {
-                    historicalData.push({
-                        date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
-                        close: closes[i]
-                    });
-                }
-            }
-
-            // Calculate 1W and 1M changes
-            let change1W = 0;
-            let change1M = 0;
-            if (historicalData.length >= 5) {
-                const weekAgoPrice = historicalData[historicalData.length - 5].close;
-                change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
-            }
-            if (historicalData.length >= 20) {
-                const monthAgoPrice = historicalData[historicalData.length - 20].close;
-                change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
-            }
-
-            return {
-                symbol: symbol,
-                companyName: meta.longName || symbol,
-                price: price,
-                change1D: changePercent,
-                change1W: change1W,
-                change1M: change1M,
-                sector: 'N/A',
-                peRatio: null,
-                pegRatio: null,
-                eps: null,
-                dividendYield: null,
-                high52Week: meta.fiftyTwoWeekHigh || price,
-                historicalData: historicalData.slice(-30)
-            };
+        if (dates.length >= 5) {
+            const weekAgoPrice = parseFloat(timeSeries[dates[dates.length - 5]]['4. close']);
+            change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
         }
-    } catch (error) {
-        console.error(`Error fetching Yahoo data for ${symbol}:`, error);
+        if (dates.length >= 20) {
+            const monthAgoPrice = parseFloat(timeSeries[dates[dates.length - 20]]['4. close']);
+            change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
+        }
     }
-    return null;
+
+    const stockData = {
+        symbol: symbol,
+        companyName: companyName,
+        price: price,
+        change1D: changePercent,
+        change1W: change1W,
+        change1M: change1M,
+        sector: sector,
+        peRatio: peRatio,
+        pegRatio: pegRatio,
+        eps: eps,
+        dividendYield: dividendYield ? dividendYield * 100 : null,
+        high52Week: high52Week,
+        historicalData: historicalData
+    };
+
+    stockDataCache[cacheKey] = {
+        data: stockData,
+        timestamp: Date.now()
+    };
+
+    return stockData;
 }
 
 // Stock Detail Page
@@ -750,17 +848,27 @@ async function displayStockDetail(stock) {
 
 async function fetchExtendedHistoricalData(symbol) {
     try {
-        const apiKey = 'demo';
-        const response = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&apikey=${apiKey}&outputsize=full`);
+        const proxyUrl = 'https://api.allorigins.win/raw?url=';
+        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2y&includePrePost=false`;
+        
+        const response = await fetch(proxyUrl + encodeURIComponent(yahooUrl));
         const data = await response.json();
         
-        if (data['Time Series (Daily)']) {
-            const timeSeries = data['Time Series (Daily)'];
-            const dates = Object.keys(timeSeries).sort();
-            return dates.map(date => ({
-                date: date,
-                close: parseFloat(timeSeries[date]['4. close'])
-            }));
+        if (data.chart && data.chart.result && data.chart.result[0]) {
+            const result = data.chart.result[0];
+            const timestamps = result.timestamp || [];
+            const closes = result.indicators.quote[0].close || [];
+            
+            const historicalData = [];
+            for (let i = 0; i < timestamps.length; i++) {
+                if (closes[i] !== null && closes[i] !== undefined) {
+                    historicalData.push({
+                        date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+                        close: closes[i]
+                    });
+                }
+            }
+            return historicalData;
         }
     } catch (error) {
         console.error('Error fetching extended data:', error);
@@ -770,50 +878,53 @@ async function fetchExtendedHistoricalData(symbol) {
 
 async function fetchHistoricalDataForTimeframe(symbol, timeframe) {
     try {
-        const apiKey = 'demo';
-        let outputsize = 'compact';
-        let interval = 'daily';
+        const proxies = ['https://api.allorigins.win/raw?url=', 'https://corsproxy.io/?'];
+        let range = '3mo';
         
-        if (timeframe === '1D') {
-            interval = 'intraday';
-            outputsize = 'compact';
-        } else if (timeframe === '1W' || timeframe === '1M') {
-            outputsize = 'compact';
-        } else {
-            outputsize = 'full';
-        }
-
-        const response = await fetch(`https://www.alphavantage.co/query?function=TIME_SERIES_${interval === 'intraday' ? 'INTRADAY&interval=5min' : 'DAILY'}&symbol=${symbol}&apikey=${apiKey}&outputsize=${outputsize}`);
-        const data = await response.json();
+        // Map timeframe to Yahoo Finance range
+        const rangeMap = {
+            '1D': '1d',
+            '1W': '5d',
+            '1M': '1mo',
+            '3M': '3mo',
+            '6M': '6mo',
+            '1Y': '1y',
+            'ALL': '5y'
+        };
         
-        if (data['Time Series (Daily)'] || data['Time Series (5min)']) {
-            const timeSeries = data['Time Series (Daily)'] || data['Time Series (5min)'];
-            const dates = Object.keys(timeSeries).sort();
-            
-            // Filter by timeframe
-            let filteredDates = dates;
-            const now = new Date();
-            if (timeframe === '1W') {
-                const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-                filteredDates = dates.filter(d => new Date(d) >= weekAgo);
-            } else if (timeframe === '1M') {
-                const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-                filteredDates = dates.filter(d => new Date(d) >= monthAgo);
-            } else if (timeframe === '3M') {
-                const threeMonthsAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-                filteredDates = dates.filter(d => new Date(d) >= threeMonthsAgo);
-            } else if (timeframe === '6M') {
-                const sixMonthsAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
-                filteredDates = dates.filter(d => new Date(d) >= sixMonthsAgo);
-            } else if (timeframe === '1Y') {
-                const yearAgo = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-                filteredDates = dates.filter(d => new Date(d) >= yearAgo);
+        range = rangeMap[timeframe] || '3mo';
+        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=${range}&includePrePost=false`;
+        
+        let data = null;
+        for (const proxy of proxies) {
+            try {
+                const response = await fetch(proxy + encodeURIComponent(yahooUrl));
+                if (response.ok) {
+                    data = await response.json();
+                    if (data.chart && data.chart.result && data.chart.result[0]) {
+                        break;
+                    }
+                }
+            } catch (e) {
+                continue;
             }
+        }
+        
+        if (data && data.chart && data.chart.result && data.chart.result[0]) {
+            const result = data.chart.result[0];
+            const timestamps = result.timestamp || [];
+            const closes = result.indicators.quote[0].close || [];
             
-            return filteredDates.map(date => ({
-                date: date,
-                close: parseFloat(timeSeries[date][interval === 'intraday' ? '4. close' : '4. close'])
-            }));
+            const historicalData = [];
+            for (let i = 0; i < timestamps.length; i++) {
+                if (closes[i] !== null && closes[i] !== undefined) {
+                    historicalData.push({
+                        date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+                        close: closes[i]
+                    });
+                }
+            }
+            return historicalData;
         }
     } catch (error) {
         console.error('Error fetching timeframe data:', error);
