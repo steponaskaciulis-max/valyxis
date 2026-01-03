@@ -323,10 +323,10 @@ function displayStocks(stocksData) {
                                 <td class="${change1D >= 0 ? 'positive' : 'negative'}">${change1D >= 0 ? '+' : ''}${formatNumber(change1D)}%</td>
                                 <td class="${change1W >= 0 ? 'positive' : 'negative'}">${change1W >= 0 ? '+' : ''}${formatNumber(change1W)}%</td>
                                 <td class="${change1M >= 0 ? 'positive' : 'negative'}">${change1M >= 0 ? '+' : ''}${formatNumber(change1M)}%</td>
-                                <td>${formatNumber(stock.peRatio) || 'N/A'}</td>
-                                <td>${formatNumber(stock.pegRatio) || 'N/A'}</td>
-                                <td>${formatNumber(stock.eps) || 'N/A'}</td>
-                                <td>${stock.dividendYield ? formatNumber(stock.dividendYield) + '%' : 'N/A'}</td>
+                                <td>${(stock.peRatio !== null && stock.peRatio !== undefined && !isNaN(stock.peRatio)) ? formatNumber(stock.peRatio) : 'N/A'}</td>
+                                <td>${(stock.pegRatio !== null && stock.pegRatio !== undefined && !isNaN(stock.pegRatio)) ? formatNumber(stock.pegRatio) : 'N/A'}</td>
+                                <td>${(stock.eps !== null && stock.eps !== undefined && !isNaN(stock.eps)) ? formatNumber(stock.eps) : 'N/A'}</td>
+                                <td>${(stock.dividendYield !== null && stock.dividendYield !== undefined && !isNaN(stock.dividendYield)) ? formatNumber(stock.dividendYield) + '%' : 'N/A'}</td>
                                 <td>$${formatNumber(stock.high52Week)}</td>
                                 <td class="${delta52W >= 0 ? 'positive' : 'negative'}">${formatNumber(delta52W)}%</td>
                                 <td class="chart-cell">
