@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Valyxis - Professional Stock Watch</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <h1>Valyxis</h1>
+            </div>
+            <div class="nav-links">
+                <a href="#home" class="nav-link active" data-page="home">Home</a>
+                <a href="#watchlists" class="nav-link" data-page="watchlists">Watchlists</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Home Page -->
+    <div id="home-page" class="page active">
+        <div class="hero-section">
+            <div class="hero-content">
+                <h1 class="hero-title">Welcome to Valyxis</h1>
+                <p class="hero-subtitle">Your Professional Stock Market Companion</p>
+                <p class="hero-description">
+                    Valyxis provides real-time stock market data, comprehensive analytics, and powerful watchlist management. 
+                    Track your favorite stocks, monitor performance across multiple timeframes, and make informed investment decisions 
+                    with our advanced visualization tools.
+                </p>
+                <div class="hero-features">
+                    <div class="feature-card">
+                        <div class="feature-icon">📊</div>
+                        <h3>Real-Time Data</h3>
+                        <p>Live stock prices and market data updated in real-time</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📈</div>
+                        <h3>Advanced Charts</h3>
+                        <p>Interactive graphs with detailed historical analysis</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⭐</div>
+                        <h3>Smart Watchlists</h3>
+                        <p>Organize and track multiple stock portfolios</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔍</div>
+                        <h3>Comprehensive Metrics</h3>
+                        <p>P/E, PEG, EPS, Dividends, and more</p>
+                    </div>
+                </div>
+                <a href="#watchlists" class="cta-button" data-page="watchlists">Get Started</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Watchlists Page -->
+    <div id="watchlists-page" class="page">
+        <div class="page-container">
+            <div class="page-header">
+                <h2>My Watchlists</h2>
+                <button class="btn btn-primary" id="create-watchlist-btn">
+                    <span>+</span> Create New Watchlist
+                </button>
+            </div>
+            <div id="watchlists-container" class="watchlists-grid">
+                <!-- Watchlists will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Watchlist Detail Page -->
+    <div id="watchlist-detail-page" class="page">
+        <div class="page-container">
+            <div class="page-header">
+                <button class="btn btn-secondary" id="back-to-watchlists">
+                    ← Back to Watchlists
+                </button>
+                <div class="header-actions">
+                    <div class="auto-refresh-toggle">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="auto-refresh-toggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>Auto Refresh</span>
+                    </div>
+                    <button class="btn btn-primary" id="refresh-stocks-btn">
+                        🔄 Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="watchlist-header">
+                <h2 id="watchlist-title">Watchlist</h2>
+                <div class="watchlist-controls">
+                    <button class="btn btn-icon" id="edit-watchlist-name" title="Edit Name">✏️</button>
+                    <button class="btn btn-icon btn-danger" id="delete-watchlist" title="Delete Watchlist">🗑️</button>
+                </div>
+            </div>
+            <div class="add-stock-section">
+                <input type="text" id="stock-input" placeholder="Enter ticker symbol or company name (e.g., AAPL, Apple)" class="stock-input">
+                <button class="btn btn-primary" id="add-stock-btn">Add Stock</button>
+            </div>
+            <div id="stocks-container" class="stocks-grid">
+                <!-- Stocks will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Stock Detail Page -->
+    <div id="stock-detail-page" class="page">
+        <div class="page-container">
+            <div class="page-header">
+                <button class="btn btn-secondary" id="back-to-watchlist">
+                    ← Back to Watchlist
+                </button>
+                <button class="btn btn-danger" id="remove-stock-btn">Remove Stock</button>
+            </div>
+            <div id="stock-detail-container">
+                <!-- Stock details will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Watchlist Modal -->
+    <div id="create-watchlist-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New Watchlist</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="new-watchlist-name" placeholder="Enter watchlist name" class="form-input">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="confirm-create-watchlist">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Watchlist Name Modal -->
+    <div id="edit-watchlist-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit Watchlist Name</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="edit-watchlist-name-input" placeholder="Enter new name" class="form-input">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="confirm-edit-watchlist">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
