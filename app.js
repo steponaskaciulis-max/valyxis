@@ -569,17 +569,37 @@ async function fetchStockDataYahoo(symbol) {
         const baseUrl = window.location.origin;
         const chartUrl = `${baseUrl}/api/stock?symbol=${symbol}`;
         
-        const response = await fetch(chartUrl, {
-            headers: {
-                'Accept': 'application/json'
-            }
-        });
+        let response;
+        try {
+            response = await fetch(chartUrl, {
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+        } catch (e) {
+            // Fallback to proxy if serverless function not available
+            const proxy = 'https://api.allorigins.win/raw?url=';
+            const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&includePrePost=false`;
+            response = await fetch(proxy + encodeURIComponent(yahooUrl));
+        }
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
         
-        const data = await response.json();
+        let responseData = await response.json();
+        
+        // Handle allorigins wrapper if used
+        let data;
+        if (responseData.contents) {
+            try {
+                data = JSON.parse(responseData.contents);
+            } catch (e) {
+                data = responseData.contents;
+            }
+        } else {
+            data = responseData;
+        }
 
         if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
             throw new Error('No data from Yahoo Finance');
@@ -639,9 +659,20 @@ async function fetchStockDataYahoo(symbol) {
             const baseUrl = window.location.origin;
             const summaryUrl = `${baseUrl}/api/quoteSummary?symbol=${symbol}`;
             
-            const summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
+            let summaryResponse;
+            try {
+                summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
+            } catch (e) {
+                // Fallback to proxy
+                const proxy = 'https://api.allorigins.win/raw?url=';
+                const yahooSummaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData`;
+                summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { signal: AbortSignal.timeout(5000) });
+            }
+            
             if (summaryResponse.ok) {
-                const summaryData = await summaryResponse.json();
+                let summaryDataRaw = await summaryResponse.json();
+                // Handle allorigins wrapper
+                const summaryData = summaryDataRaw.contents ? JSON.parse(summaryDataRaw.contents) : summaryDataRaw;
                 
                 if (summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
                     const summary = summaryData.quoteSummary.result[0];
