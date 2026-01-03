@@ -284,62 +284,85 @@ function displayStocks(stocksData) {
         return;
     }
 
-    container.innerHTML = stocksData.map(stock => {
-        const change1D = stock.change1D || 0;
-        const changeClass = change1D >= 0 ? 'positive' : 'negative';
-        const changeSign = change1D >= 0 ? '+' : '';
+    container.innerHTML = `
+        <div class="stocks-table-wrapper">
+            <table class="stocks-table">
+                <thead>
+                    <tr>
+                        <th>Ticker</th>
+                        <th>Sector</th>
+                        <th>Price</th>
+                        <th>1D%</th>
+                        <th>1W%</th>
+                        <th>1M%</th>
+                        <th>P/E</th>
+                        <th>PEG</th>
+                        <th>EPS</th>
+                        <th>DIV %</th>
+                        <th>52W High</th>
+                        <th>Δ from 52W</th>
+                        <th>Chart</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${stocksData.map(stock => {
+                        const change1D = stock.change1D || 0;
+                        const change1W = stock.change1W || 0;
+                        const change1M = stock.change1M || 0;
+                        const delta52W = ((stock.price / stock.high52Week - 1) * 100) || 0;
+                        
+                        return `
+                            <tr class="stock-row" data-symbol="${stock.symbol}">
+                                <td class="ticker-cell">
+                                    <strong>${stock.symbol}</strong>
+                                    <div class="company-name-small">${(stock.companyName || '').substring(0, 20)}${(stock.companyName && stock.companyName.length > 20 ? '...' : '')}</div>
+                                </td>
+                                <td>${stock.sector || 'N/A'}</td>
+                                <td class="price-cell">$${formatNumber(stock.price)}</td>
+                                <td class="${change1D >= 0 ? 'positive' : 'negative'}">${change1D >= 0 ? '+' : ''}${formatNumber(change1D)}%</td>
+                                <td class="${change1W >= 0 ? 'positive' : 'negative'}">${change1W >= 0 ? '+' : ''}${formatNumber(change1W)}%</td>
+                                <td class="${change1M >= 0 ? 'positive' : 'negative'}">${change1M >= 0 ? '+' : ''}${formatNumber(change1M)}%</td>
+                                <td>${formatNumber(stock.peRatio) || 'N/A'}</td>
+                                <td>${formatNumber(stock.pegRatio) || 'N/A'}</td>
+                                <td>${formatNumber(stock.eps) || 'N/A'}</td>
+                                <td>${stock.dividendYield ? formatNumber(stock.dividendYield) + '%' : 'N/A'}</td>
+                                <td>$${formatNumber(stock.high52Week)}</td>
+                                <td class="${delta52W >= 0 ? 'positive' : 'negative'}">${formatNumber(delta52W)}%</td>
+                                <td class="chart-cell">
+                                    <div class="stock-spark-container" data-symbol="${stock.symbol}">
+                                        <canvas id="spark-${stock.symbol}"></canvas>
+                                    </div>
+                                </td>
+                                <td class="action-cell">
+                                    <button class="btn btn-danger btn-small remove-stock-row-btn" data-symbol="${stock.symbol}">Remove</button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
 
-        return `
-            <div class="stock-card" data-symbol="${stock.symbol}">
-                <div class="stock-card-header">
-                    <div>
-                        <div class="stock-ticker">${stock.symbol}</div>
-                        <div class="stock-company">${stock.companyName || 'N/A'}</div>
-                    </div>
-                    <div>
-                        <div class="stock-price">$${formatNumber(stock.price)}</div>
-                        <div class="stock-change ${changeClass}">${changeSign}${formatNumber(change1D)}%</div>
-                    </div>
-                </div>
-                <div class="stock-metrics">
-                    <div class="metric-item">
-                        <span class="metric-label">Sector</span>
-                        <span class="metric-value">${stock.sector || 'N/A'}</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">1W%</span>
-                        <span class="metric-value ${(stock.change1W || 0) >= 0 ? 'positive' : 'negative'}">${formatNumber(stock.change1W || 0)}%</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">1M%</span>
-                        <span class="metric-value ${(stock.change1M || 0) >= 0 ? 'positive' : 'negative'}">${formatNumber(stock.change1M || 0)}%</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">P/E</span>
-                        <span class="metric-value">${formatNumber(stock.peRatio) || 'N/A'}</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">52W High</span>
-                        <span class="metric-value">$${formatNumber(stock.high52Week)}</span>
-                    </div>
-                    <div class="metric-item">
-                        <span class="metric-label">Δ from 52W</span>
-                        <span class="metric-value ${((stock.price / stock.high52Week - 1) * 100 || 0) >= 0 ? 'positive' : 'negative'}">${formatNumber((stock.price / stock.high52Week - 1) * 100 || 0)}%</span>
-                    </div>
-                </div>
-                <div class="stock-spark-container" data-symbol="${stock.symbol}">
-                    <canvas id="spark-${stock.symbol}"></canvas>
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    // Add click listeners for stock cards
-    container.querySelectorAll('.stock-card').forEach(card => {
-        card.addEventListener('click', (e) => {
-            if (!e.target.closest('.stock-spark-container')) {
-                const symbol = card.getAttribute('data-symbol');
+    // Add click listeners for stock rows
+    container.querySelectorAll('.stock-row').forEach(row => {
+        row.addEventListener('click', (e) => {
+            if (!e.target.closest('.stock-spark-container') && !e.target.closest('.remove-stock-row-btn') && !e.target.closest('.action-cell')) {
+                const symbol = row.getAttribute('data-symbol');
                 openStockDetail(symbol);
+            }
+        });
+    });
+
+    // Add remove button listeners
+    container.querySelectorAll('.remove-stock-row-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const symbol = btn.getAttribute('data-symbol');
+            if (currentWatchlistId && confirm(`Remove ${symbol} from this watchlist?`)) {
+                removeStockFromWatchlist(currentWatchlistId, symbol);
+                refreshStocks();
             }
         });
     });
