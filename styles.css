@@ -24,10 +24,11 @@
 
 html {
     background: #0a0e27 !important;
+    background-color: #0a0e27 !important;
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif !important;
     background: #0a0e27 !important;
     background-color: #0a0e27 !important;
     color: #e2e8f0 !important;
@@ -35,6 +36,17 @@ body {
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+/* Force all text to be light colored */
+h1, h2, h3, h4, h5, h6, p, span, div, a, li, td, th {
+    color: #e2e8f0 !important;
+}
+
+/* Force all backgrounds to be dark */
+.page, .hero-section, .page-container {
+    background: #0a0e27 !important;
+    background-color: #0a0e27 !important;
 }
 
 /* Navigation */

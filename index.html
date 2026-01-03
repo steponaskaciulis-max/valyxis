@@ -4,7 +4,40 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Valyxis - Professional Stock Watch</title>
-    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Force dark theme immediately - no white backgrounds */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html {
+            background: #0a0e27 !important;
+            background-color: #0a0e27 !important;
+        }
+        body {
+            background: #0a0e27 !important;
+            background-color: #0a0e27 !important;
+            color: #e2e8f0 !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            min-height: 100vh;
+        }
+        nav, .navbar {
+            background: #141b2d !important;
+            color: #e2e8f0 !important;
+        }
+        .hero-section {
+            background: linear-gradient(135deg, #141b2d 0%, #0a0e27 50%, #1a1f3a 100%) !important;
+            color: #e2e8f0 !important;
+        }
+        h1, h2, h3, h4, h5, h6, p, span, div, a {
+            color: inherit;
+        }
+        .page {
+            background: #0a0e27 !important;
+        }
+    </style>
+    <link rel="stylesheet" href="styles.css?v=2">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 </head>
