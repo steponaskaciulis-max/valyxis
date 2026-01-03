@@ -650,8 +650,7 @@ async function fetchStockDataYahoo(symbol) {
     }
     
     // Fallback to direct proxy
-    const data = await fetchStockDataDirect(symbol);
-    return await parseYahooData(data, symbol);
+    return await fetchStockDataDirect(symbol);
 }
 
 // Parse Yahoo Finance data
