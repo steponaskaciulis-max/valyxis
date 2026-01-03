@@ -623,7 +623,7 @@ async function fetchStockDataDirect(symbol) {
             data = responseData;
         }
         
-        return parseYahooData(data, symbol);
+        return await parseYahooData(data, symbol);
     } catch (error) {
         clearTimeout(timeout);
         throw error;
