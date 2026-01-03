@@ -647,13 +647,10 @@ function parseYahooData(data, symbol) {
     if (!price || price === 0 || isNaN(price)) {
         throw new Error(`Invalid price data for ${symbol}: ${price}`);
     }
-        if (!price || price === 0) {
-            throw new Error('Invalid price data');
-        }
-        
-        const previousClose = meta.previousClose || (closes[closes.length - 2] || price);
-        const change = price - previousClose;
-        const changePercent = previousClose ? (change / previousClose) * 100 : 0;
+    
+    const previousClose = meta.previousClose || (closes.length > 1 ? closes[closes.length - 2] : price);
+    const change = price - previousClose;
+    const changePercent = previousClose && previousClose > 0 ? (change / previousClose) * 100 : 0;
 
         // Build historical data
         const historicalData = [];
