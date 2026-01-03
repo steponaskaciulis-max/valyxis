@@ -562,43 +562,24 @@ async function fetchStockDataFinnhub(symbol) {
     throw new Error('Use Yahoo instead');
 }
 
-// Primary: Yahoo Finance API (free, no key required)
+// Primary: Use Vercel serverless function (no CORS issues)
 async function fetchStockDataYahoo(symbol) {
     try {
-        // Use allorigins.win - most reliable free CORS proxy
-        const proxy = 'https://api.allorigins.win/raw?url=';
-        const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&includePrePost=false`;
-        const fullUrl = proxy + encodeURIComponent(yahooUrl);
+        // Use our Vercel API endpoint (no CORS issues)
+        const baseUrl = window.location.origin;
+        const chartUrl = `${baseUrl}/api/stock?symbol=${symbol}`;
         
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-        
-        const response = await fetch(fullUrl, {
-            signal: controller.signal,
+        const response = await fetch(chartUrl, {
             headers: {
                 'Accept': 'application/json'
             }
         });
         
-        clearTimeout(timeoutId);
-        
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
         
-        let responseData = await response.json();
-        
-        // allorigins wraps the response
-        let data;
-        if (responseData.contents) {
-            try {
-                data = JSON.parse(responseData.contents);
-            } catch (e) {
-                data = responseData.contents;
-            }
-        } else {
-            data = responseData;
-        }
+        const data = await response.json();
 
         if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
             throw new Error('No data from Yahoo Finance');
@@ -654,16 +635,13 @@ async function fetchStockDataYahoo(symbol) {
         let dividendYield = null;
         
         try {
-            const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData`;
-            const proxyForSummary = proxies.find(p => p.includes('allorigins')) || proxies[0];
-            const summaryFullUrl = proxyForSummary.includes('allorigins') 
-                ? proxyForSummary + encodeURIComponent(summaryUrl)
-                : proxyForSummary + summaryUrl;
+            // Use Vercel API endpoint for summary
+            const baseUrl = window.location.origin;
+            const summaryUrl = `${baseUrl}/api/quoteSummary?symbol=${symbol}`;
             
-            const summaryResponse = await fetch(summaryFullUrl, { signal: AbortSignal.timeout(5000) });
+            const summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
             if (summaryResponse.ok) {
-                const summaryDataRaw = await summaryResponse.json();
-                const summaryData = summaryDataRaw.contents ? JSON.parse(summaryDataRaw.contents) : summaryDataRaw;
+                const summaryData = await summaryResponse.json();
                 
                 if (summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
                     const summary = summaryData.quoteSummary.result[0];
