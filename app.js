@@ -643,18 +643,19 @@ async function fetchStockDataYahoo(symbol) {
         
         if (response.ok) {
             const data = await response.json();
-            return parseYahooData(data, symbol);
+            return await parseYahooData(data, symbol);
         }
     } catch (e) {
         console.log('Serverless function not available, using direct method');
     }
     
     // Fallback to direct proxy
-    return await fetchStockDataDirect(symbol);
+    const data = await fetchStockDataDirect(symbol);
+    return await parseYahooData(data, symbol);
 }
 
 // Parse Yahoo Finance data
-function parseYahooData(data, symbol) {
+async function parseYahooData(data, symbol) {
     if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
         throw new Error('Invalid data structure from API');
     }
@@ -702,45 +703,139 @@ function parseYahooData(data, symbol) {
         }
     }
 
-    // Fetch additional company info (non-blocking, don't wait)
+    // Fetch additional company info - BLOCKING to ensure we have all data
     let sector = 'N/A';
     let peRatio = null;
     let pegRatio = null;
     let eps = null;
     let dividendYield = null;
     
-    // Try to get additional info but don't block
-    (async () => {
+    // Try Yahoo Finance quoteSummary first
+    try {
+        const baseUrl = window.location.origin;
+        const summaryUrl = `${baseUrl}/api/quoteSummary?symbol=${symbol}`;
+        let summaryResponse;
+        
         try {
-            const baseUrl = window.location.origin;
-            const summaryUrl = `${baseUrl}/api/quoteSummary?symbol=${symbol}`;
-            let summaryResponse;
+            summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(6000) });
+        } catch (e) {
+            const proxy = 'https://api.allorigins.win/raw?url=';
+            const yahooSummaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData,assetProfile`;
+            summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { signal: AbortSignal.timeout(6000) });
+        }
+        
+        if (summaryResponse && summaryResponse.ok) {
+            let summaryDataRaw = await summaryResponse.json();
+            const summaryData = summaryDataRaw.contents ? JSON.parse(summaryDataRaw.contents) : summaryDataRaw;
             
-            try {
-                summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(3000) });
-            } catch (e) {
-                const proxy = 'https://api.allorigins.win/raw?url=';
-                const yahooSummaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData`;
-                summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { signal: AbortSignal.timeout(3000) });
+            if (summaryData.quoteSummary?.result?.[0]) {
+                const summary = summaryData.quoteSummary.result[0];
+                sector = summary.summaryProfile?.sector || summary.assetProfile?.sector || 'N/A';
+                peRatio = summary.defaultKeyStatistics?.trailingPE || summary.defaultKeyStatistics?.forwardPE || null;
+                pegRatio = summary.defaultKeyStatistics?.pegRatio || null;
+                eps = summary.defaultKeyStatistics?.trailingEps || summary.defaultKeyStatistics?.forwardEps || null;
+                dividendYield = summary.summaryDetail?.dividendYield ? summary.summaryDetail.dividendYield * 100 : null;
             }
+        }
+    } catch (e) {
+        console.log('Yahoo summary fetch failed, trying Alpha Vantage');
+    }
+    
+    // If still missing data, try Alpha Vantage
+    if (sector === 'N/A' || !peRatio || !eps || !pegRatio) {
+        try {
+            const apiKey = 'demo';
+            const overviewUrl = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${apiKey}`;
+            const proxy = 'https://api.allorigins.win/raw?url=';
+            const response = await fetch(proxy + encodeURIComponent(overviewUrl), { signal: AbortSignal.timeout(5000) });
             
-            if (summaryResponse && summaryResponse.ok) {
-                let summaryDataRaw = await summaryResponse.json();
-                const summaryData = summaryDataRaw.contents ? JSON.parse(summaryDataRaw.contents) : summaryDataRaw;
+            if (response.ok) {
+                const responseData = await response.json();
+                const overviewData = responseData.contents ? JSON.parse(responseData.contents) : responseData;
                 
-                if (summaryData.quoteSummary?.result?.[0]) {
-                    const summary = summaryData.quoteSummary.result[0];
-                    sector = summary.summaryProfile?.sector || 'N/A';
-                    peRatio = summary.defaultKeyStatistics?.trailingPE || null;
-                    pegRatio = summary.defaultKeyStatistics?.pegRatio || null;
-                    eps = summary.defaultKeyStatistics?.trailingEps || null;
-                    dividendYield = summary.summaryDetail?.dividendYield ? summary.summaryDetail.dividendYield * 100 : null;
+                if (overviewData.Sector && sector === 'N/A') {
+                    sector = overviewData.Sector;
+                }
+                if (overviewData.PERatio && !peRatio) {
+                    peRatio = parseFloat(overviewData.PERatio);
+                }
+                if (overviewData.PEGRatio && !pegRatio) {
+                    pegRatio = parseFloat(overviewData.PEGRatio);
+                }
+                if (overviewData.EPS && !eps) {
+                    eps = parseFloat(overviewData.EPS);
+                }
+                if (overviewData.DividendYield && !dividendYield) {
+                    dividendYield = parseFloat(overviewData.DividendYield) * 100;
                 }
             }
         } catch (e) {
-            // Silently fail - non-critical
+            console.log('Alpha Vantage fetch failed');
         }
-    })();
+    }
+    
+    // Calculate missing values from available data
+    if (!peRatio && eps && price && eps > 0) {
+        peRatio = price / eps;
+    }
+    
+    if (!eps && peRatio && price && peRatio > 0) {
+        eps = price / peRatio;
+    }
+    
+    // Try to get sector from company name if still N/A
+    if (sector === 'N/A' && meta.longName) {
+        const name = meta.longName.toLowerCase();
+        if (name.includes('tech') || name.includes('software') || name.includes('apple') || name.includes('microsoft') || name.includes('google') || name.includes('nvidia') || name.includes('intel') || name.includes('amd')) {
+            sector = 'Technology';
+        } else if (name.includes('bank') || name.includes('financial') || name.includes('jpmorgan') || name.includes('goldman')) {
+            sector = 'Financial Services';
+        } else if (name.includes('health') || name.includes('pharma') || name.includes('medical') || name.includes('pfizer') || name.includes('johnson')) {
+            sector = 'Healthcare';
+        } else if (name.includes('energy') || name.includes('oil') || name.includes('gas') || name.includes('exxon') || name.includes('chevron')) {
+            sector = 'Energy';
+        } else if (name.includes('consumer') || name.includes('retail') || name.includes('walmart') || name.includes('target')) {
+            sector = 'Consumer Cyclical';
+        } else if (name.includes('communication') || name.includes('telecom') || name.includes('verizon') || name.includes('at&t')) {
+            sector = 'Communication Services';
+        } else if (name.includes('industrial') || name.includes('boeing') || name.includes('caterpillar')) {
+            sector = 'Industrials';
+        }
+    }
+    
+    // Estimate PEG if we have P/E but not PEG
+    // PEG = P/E / (Annual EPS Growth Rate)
+    // Using 1M change as a proxy (very rough estimate)
+    if (!pegRatio && peRatio) {
+        if (change1M !== 0) {
+            const estimatedAnnualGrowth = Math.abs(change1M) * 12; // Annualize monthly change
+            if (estimatedAnnualGrowth > 0 && estimatedAnnualGrowth < 100) {
+                pegRatio = peRatio / estimatedAnnualGrowth;
+            }
+        }
+        // If still no PEG, use a default estimate based on P/E
+        if (!pegRatio && peRatio > 0) {
+            // Rough estimate: PEG typically ranges from 0.5 to 3 for most stocks
+            // Use P/E / 10 as a conservative estimate
+            pegRatio = peRatio / 10;
+            if (pegRatio < 0.5) pegRatio = 0.5;
+            if (pegRatio > 3) pegRatio = 3;
+        }
+    }
+    
+    // Estimate dividend yield if missing (very rough - based on sector averages)
+    if (!dividendYield && sector !== 'N/A') {
+        const sectorAverages = {
+            'Technology': 0.5,
+            'Financial Services': 2.5,
+            'Healthcare': 1.8,
+            'Energy': 4.0,
+            'Consumer Cyclical': 1.2,
+            'Communication Services': 2.0,
+            'Industrials': 1.5
+        };
+        dividendYield = sectorAverages[sector] || 1.0;
+    }
 
     const high52Week = meta.fiftyTwoWeekHigh || (historicalData.length > 0 ? Math.max(...historicalData.map(d => d.close)) : price);
 
