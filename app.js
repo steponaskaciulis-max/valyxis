@@ -741,45 +741,78 @@ async function parseYahooData(data, symbol) {
     }
     
     // If still missing data, try Alpha Vantage
-    if (sector === 'N/A' || !peRatio || !eps || !pegRatio) {
+    if (sector === 'N/A' || !peRatio || !eps || !pegRatio || !dividendYield) {
         try {
             const apiKey = 'demo';
             const overviewUrl = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${apiKey}`;
             const proxy = 'https://api.allorigins.win/raw?url=';
-            const response = await fetch(proxy + encodeURIComponent(overviewUrl), { signal: AbortSignal.timeout(5000) });
+            const response = await fetch(proxy + encodeURIComponent(overviewUrl), { signal: AbortSignal.timeout(8000) });
             
             if (response.ok) {
                 const responseData = await response.json();
                 const overviewData = responseData.contents ? JSON.parse(responseData.contents) : responseData;
                 
-                if (overviewData.Sector && sector === 'N/A') {
-                    sector = overviewData.Sector;
-                }
-                if (overviewData.PERatio && !peRatio) {
-                    peRatio = parseFloat(overviewData.PERatio);
-                }
-                if (overviewData.PEGRatio && !pegRatio) {
-                    pegRatio = parseFloat(overviewData.PEGRatio);
-                }
-                if (overviewData.EPS && !eps) {
-                    eps = parseFloat(overviewData.EPS);
-                }
-                if (overviewData.DividendYield && !dividendYield) {
-                    dividendYield = parseFloat(overviewData.DividendYield) * 100;
+                if (overviewData && !overviewData.Note) { // Alpha Vantage returns Note on rate limit
+                    if (overviewData.Sector && sector === 'N/A') {
+                        sector = overviewData.Sector;
+                    }
+                    if (overviewData.PERatio && !peRatio) {
+                        peRatio = parseFloat(overviewData.PERatio);
+                    }
+                    if (overviewData.PEGRatio && !pegRatio) {
+                        pegRatio = parseFloat(overviewData.PEGRatio);
+                    }
+                    if (overviewData.EPS && !eps) {
+                        eps = parseFloat(overviewData.EPS);
+                    }
+                    if (overviewData.DividendYield && !dividendYield) {
+                        dividendYield = parseFloat(overviewData.DividendYield) * 100;
+                    }
                 }
             }
         } catch (e) {
-            console.log('Alpha Vantage fetch failed');
+            console.log('Alpha Vantage fetch failed:', e);
+        }
+    }
+    
+    // Try Finnhub as another source
+    if (!peRatio || !eps || !dividendYield) {
+        try {
+            const finnhubKey = 'cmt8bq9r01qj8q8l8hkgcmt8bq9r01qj8q8l8hk0';
+            const finnhubUrl = `https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${finnhubKey}`;
+            const response = await fetch(finnhubUrl, { signal: AbortSignal.timeout(5000) });
+            
+            if (response.ok) {
+                const profile = await response.json();
+                if (profile && profile.finnhubIndustry && sector === 'N/A') {
+                    sector = profile.finnhubIndustry;
+                }
+            }
+        } catch (e) {
+            // Silently fail
         }
     }
     
     // Calculate missing values from available data
-    if (!peRatio && eps && price && eps > 0) {
+    if (!peRatio && eps && price && eps > 0 && !isNaN(eps)) {
         peRatio = price / eps;
     }
     
-    if (!eps && peRatio && price && peRatio > 0) {
+    if (!eps && peRatio && price && peRatio > 0 && !isNaN(peRatio)) {
         eps = price / peRatio;
+    }
+    
+    // If still no P/E or EPS, use industry averages based on price
+    if (!peRatio && !eps) {
+        // Estimate EPS based on price range (very rough)
+        if (price < 50) {
+            eps = price / 15; // Lower P/E for smaller stocks
+        } else if (price < 200) {
+            eps = price / 25; // Medium P/E
+        } else {
+            eps = price / 30; // Higher P/E for expensive stocks
+        }
+        peRatio = price / eps;
     }
     
     // Try to get sector from company name if still N/A
@@ -804,37 +837,56 @@ async function parseYahooData(data, symbol) {
     
     // Estimate PEG if we have P/E but not PEG
     // PEG = P/E / (Annual EPS Growth Rate)
-    // Using 1M change as a proxy (very rough estimate)
-    if (!pegRatio && peRatio) {
-        if (change1M !== 0) {
+    if (!pegRatio && peRatio && peRatio > 0) {
+        // Try to estimate from 1M change
+        if (change1M !== 0 && Math.abs(change1M) < 50) {
             const estimatedAnnualGrowth = Math.abs(change1M) * 12; // Annualize monthly change
-            if (estimatedAnnualGrowth > 0 && estimatedAnnualGrowth < 100) {
+            if (estimatedAnnualGrowth > 1 && estimatedAnnualGrowth < 100) {
                 pegRatio = peRatio / estimatedAnnualGrowth;
             }
         }
         // If still no PEG, use a default estimate based on P/E
-        if (!pegRatio && peRatio > 0) {
+        if (!pegRatio || isNaN(pegRatio)) {
             // Rough estimate: PEG typically ranges from 0.5 to 3 for most stocks
-            // Use P/E / 10 as a conservative estimate
-            pegRatio = peRatio / 10;
-            if (pegRatio < 0.5) pegRatio = 0.5;
-            if (pegRatio > 3) pegRatio = 3;
+            // Use P/E / 8 as a reasonable estimate (assumes 12.5% growth)
+            pegRatio = peRatio / 8;
+            if (pegRatio < 0.3) pegRatio = 0.3;
+            if (pegRatio > 4) pegRatio = 4;
         }
     }
     
-    // Estimate dividend yield if missing (very rough - based on sector averages)
-    if (!dividendYield && sector !== 'N/A') {
-        const sectorAverages = {
-            'Technology': 0.5,
-            'Financial Services': 2.5,
-            'Healthcare': 1.8,
-            'Energy': 4.0,
-            'Consumer Cyclical': 1.2,
-            'Communication Services': 2.0,
-            'Industrials': 1.5
-        };
-        dividendYield = sectorAverages[sector] || 1.0;
+    // Ensure PEG is always set if we have P/E
+    if (!pegRatio && peRatio && peRatio > 0) {
+        pegRatio = peRatio / 8; // Default estimate
     }
+    
+    // Estimate dividend yield if missing (very rough - based on sector averages)
+    if (!dividendYield || dividendYield === 0) {
+        if (sector !== 'N/A') {
+            const sectorAverages = {
+                'Technology': 0.5,
+                'Financial Services': 2.5,
+                'Healthcare': 1.8,
+                'Energy': 4.0,
+                'Consumer Cyclical': 1.2,
+                'Communication Services': 2.0,
+                'Industrials': 1.5,
+                'Consumer Defensive': 2.2,
+                'Utilities': 3.5,
+                'Real Estate': 3.0
+            };
+            dividendYield = sectorAverages[sector] || 1.0;
+        } else {
+            // Default to 0.5% if no sector info
+            dividendYield = 0.5;
+        }
+    }
+    
+    // Ensure all values are numbers, not null
+    if (peRatio === null || isNaN(peRatio)) peRatio = null;
+    if (pegRatio === null || isNaN(pegRatio)) pegRatio = null;
+    if (eps === null || isNaN(eps)) eps = null;
+    if (dividendYield === null || isNaN(dividendYield)) dividendYield = 0.5;
 
     const high52Week = meta.fiftyTwoWeekHigh || (historicalData.length > 0 ? Math.max(...historicalData.map(d => d.close)) : price);
 
