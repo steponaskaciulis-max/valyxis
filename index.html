@@ -19,16 +19,93 @@
             background: #0a0e27 !important;
             background-color: #0a0e27 !important;
             color: #e2e8f0 !important;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
             min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
         }
         nav, .navbar {
             background: #141b2d !important;
+            color: #e2e8f0 !important;
+            border-bottom: 1px solid #2d3748 !important;
+            padding: 1rem 0 !important;
+        }
+        .nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .nav-brand h1 {
+            font-size: 2rem;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+        }
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+        }
+        .nav-link {
+            color: #94a3b8 !important;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .nav-link.active {
             color: #e2e8f0 !important;
         }
         .hero-section {
             background: linear-gradient(135deg, #141b2d 0%, #0a0e27 50%, #1a1f3a 100%) !important;
             color: #e2e8f0 !important;
+            padding: 6rem 2rem !important;
+            text-align: center;
+        }
+        .hero-title {
+            font-size: 4rem;
+            font-weight: 800;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .hero-subtitle {
+            font-size: 1.75rem;
+            color: #94a3b8 !important;
+            margin-bottom: 1.5rem;
+        }
+        .hero-description {
+            font-size: 1.15rem;
+            color: #94a3b8 !important;
+            max-width: 800px;
+            margin: 0 auto 3rem;
+            line-height: 1.9;
+        }
+        .feature-card {
+            background: linear-gradient(135deg, #1a2332 0%, #1e2742 100%) !important;
+            padding: 2.5rem;
+            border-radius: 16px;
+            border: 1px solid rgba(99, 102, 241, 0.2) !important;
+            color: #e2e8f0 !important;
+        }
+        .feature-card h3 {
+            color: #e2e8f0 !important;
+            font-size: 1.4rem;
+            margin-bottom: 0.75rem;
+        }
+        .feature-card p {
+            color: #94a3b8 !important;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 1.25rem 3rem;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+            color: white !important;
+            text-decoration: none;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 1.15rem;
         }
         h1, h2, h3, h4, h5, h6, p, span, div, a {
             color: inherit;
@@ -36,8 +113,11 @@
         .page {
             background: #0a0e27 !important;
         }
+        .page-container {
+            background: #0a0e27 !important;
+        }
     </style>
-    <link rel="stylesheet" href="styles.css?v=2">
+    <link rel="stylesheet" href="./styles.css?v=3">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 </head>
@@ -194,7 +274,7 @@
         </div>
     </div>
 
-    <script src="app.js"></script>
+    <script src="./app.js"></script>
 </body>
 </html>
 
