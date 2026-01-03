@@ -515,14 +515,14 @@ input:checked + .toggle-slider:before {
 }
 
 .stocks-table tbody tr {
-    background: var(--bg-card);
-    border-bottom: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     transition: background 0.2s;
     cursor: pointer;
 }
 
 .stocks-table tbody tr:hover {
-    background: var(--bg-hover);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .stocks-table tbody tr:last-child {
@@ -533,6 +533,11 @@ input:checked + .toggle-slider:before {
     padding: 1rem 0.75rem;
     color: var(--text-primary);
     vertical-align: middle;
+    white-space: nowrap;
+}
+
+.stocks-table td:first-child {
+    white-space: normal;
 }
 
 .ticker-cell {
