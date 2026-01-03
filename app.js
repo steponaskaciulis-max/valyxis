@@ -633,20 +633,20 @@ async function fetchStockDataYahoo(symbol) {
 // Parse Yahoo Finance data
 function parseYahooData(data, symbol) {
     if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
-        throw new Error('Invalid data structure');
+        throw new Error('Invalid data structure from API');
     }
 
-        if (!data || !data.chart || !data.chart.result || !data.chart.result[0]) {
-            throw new Error('No data from Yahoo Finance');
-        }
+    const result = data.chart.result[0];
+    const meta = result.meta || {};
+    const timestamps = result.timestamp || [];
+    const quotes = result.indicators?.quote?.[0] || {};
+    const closes = quotes.close || [];
 
-        const result = data.chart.result[0];
-        const meta = result.meta;
-        const timestamps = result.timestamp || [];
-        const quotes = result.indicators.quote[0];
-        const closes = quotes.close || [];
-
-        const price = meta.regularMarketPrice || meta.previousClose || (closes[closes.length - 1] || 0);
+    const price = meta.regularMarketPrice || meta.previousClose || (closes.length > 0 ? closes[closes.length - 1] : 0);
+    
+    if (!price || price === 0 || isNaN(price)) {
+        throw new Error(`Invalid price data for ${symbol}: ${price}`);
+    }
         if (!price || price === 0) {
             throw new Error('Invalid price data');
         }
@@ -682,34 +682,33 @@ function parseYahooData(data, symbol) {
             }
         }
 
-        // Fetch additional company info (non-blocking)
-        let sector = 'N/A';
-        let peRatio = null;
-        let pegRatio = null;
-        let eps = null;
-        let dividendYield = null;
-        
+    // Fetch additional company info (non-blocking, don't wait)
+    let sector = 'N/A';
+    let peRatio = null;
+    let pegRatio = null;
+    let eps = null;
+    let dividendYield = null;
+    
+    // Try to get additional info but don't block
+    (async () => {
         try {
-            // Use Vercel API endpoint for summary
             const baseUrl = window.location.origin;
             const summaryUrl = `${baseUrl}/api/quoteSummary?symbol=${symbol}`;
-            
             let summaryResponse;
+            
             try {
-                summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
+                summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(3000) });
             } catch (e) {
-                // Fallback to proxy
                 const proxy = 'https://api.allorigins.win/raw?url=';
                 const yahooSummaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData`;
-                summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { signal: AbortSignal.timeout(5000) });
+                summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { signal: AbortSignal.timeout(3000) });
             }
             
-            if (summaryResponse.ok) {
+            if (summaryResponse && summaryResponse.ok) {
                 let summaryDataRaw = await summaryResponse.json();
-                // Handle allorigins wrapper
                 const summaryData = summaryDataRaw.contents ? JSON.parse(summaryDataRaw.contents) : summaryDataRaw;
                 
-                if (summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
+                if (summaryData.quoteSummary?.result?.[0]) {
                     const summary = summaryData.quoteSummary.result[0];
                     sector = summary.summaryProfile?.sector || 'N/A';
                     peRatio = summary.defaultKeyStatistics?.trailingPE || null;
@@ -719,35 +718,37 @@ function parseYahooData(data, symbol) {
                 }
             }
         } catch (e) {
-            // Non-critical, continue with defaults
-            console.log('Additional info not available, using defaults');
+            // Silently fail - non-critical
         }
+    })();
 
-        const high52Week = meta.fiftyTwoWeekHigh || (historicalData.length > 0 ? Math.max(...historicalData.map(d => d.close)) : price);
+    const high52Week = meta.fiftyTwoWeekHigh || (historicalData.length > 0 ? Math.max(...historicalData.map(d => d.close)) : price);
 
-        const stockData = {
-            symbol: symbol,
-            companyName: meta.longName || meta.shortName || symbol,
-            price: price,
-            change1D: changePercent,
-            change1W: change1W,
-            change1M: change1M,
-            sector: sector,
-            peRatio: peRatio,
-            pegRatio: pegRatio,
-            eps: eps,
-            dividendYield: dividendYield,
-            high52Week: high52Week,
-            historicalData: historicalData.slice(-30)
-        };
+    const stockData = {
+        symbol: symbol,
+        companyName: meta.longName || meta.shortName || symbol,
+        price: price,
+        change1D: changePercent,
+        change1W: change1W,
+        change1M: change1M,
+        sector: sector,
+        peRatio: peRatio,
+        pegRatio: pegRatio,
+        eps: eps,
+        dividendYield: dividendYield,
+        high52Week: high52Week,
+        historicalData: historicalData.slice(-30)
+    };
 
-        // Cache the data
-        stockDataCache[cacheKey] = {
-            data: stockData,
-            timestamp: Date.now()
-        };
+    // Cache the data
+    const cacheKey = symbol;
+    stockDataCache[cacheKey] = {
+        data: stockData,
+        timestamp: Date.now()
+    };
 
-        return stockData;
+    return stockData;
+}
     } catch (error) {
         console.error(`Error fetching Yahoo data for ${symbol}:`, error);
         throw error;
