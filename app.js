@@ -1029,12 +1029,14 @@ function renderSparkChart(symbol, data) {
     if (!canvas || !data || data.length === 0) return;
 
     const ctx = canvas.getContext('2d');
-    const width = canvas.parentElement.offsetWidth;
-    const height = 80;
+    const width = canvas.parentElement.offsetWidth || 100;
+    const height = 40;
     canvas.width = width;
     canvas.height = height;
 
-    const prices = data.map(d => d.close);
+    const prices = data.map(d => d.close).filter(p => p && p > 0);
+    if (prices.length === 0) return;
+    
     const minPrice = Math.min(...prices);
     const maxPrice = Math.max(...prices);
     const range = maxPrice - minPrice || 1;
@@ -1045,13 +1047,17 @@ function renderSparkChart(symbol, data) {
     ctx.beginPath();
 
     data.forEach((point, index) => {
-        const x = (index / (data.length - 1)) * width;
-        const y = height - ((point.close - minPrice) / range) * height;
-        
-        if (index === 0) {
-            ctx.moveTo(x, y);
-        } else {
-            ctx.lineTo(x, y);
+        if (point.close && point.close > 0) {
+            const x = (index / (data.length - 1)) * width;
+            const y = height - ((point.close - minPrice) / range) * height;
+            
+            if (index === 0 || (index > 0 && data[index - 1].close && data[index - 1].close > 0)) {
+                if (index === 0 || !data[index - 1].close) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
         }
     });
 
