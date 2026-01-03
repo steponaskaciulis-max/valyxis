@@ -482,14 +482,26 @@ function stopAutoRefresh() {
 // Search stock by company name
 async function searchStockByName(query) {
     try {
+        // Try Finnhub search first
+        const apiKey = 'cmt8bq9r01qj8q8l8hkgcmt8bq9r01qj8q8l8hk0';
+        const finnhubResponse = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${apiKey}`);
+        
+        if (finnhubResponse.ok) {
+            const data = await finnhubResponse.json();
+            if (data.result && data.result.length > 0) {
+                return data.result[0].symbol;
+            }
+        }
+        
+        // Fallback to Yahoo Finance
         const proxyUrl = 'https://api.allorigins.win/raw?url=';
         const searchUrl = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=1&newsCount=0`;
         
         const response = await fetch(proxyUrl + encodeURIComponent(searchUrl));
-        const data = await response.json();
+        const yahooData = await response.json();
         
-        if (data.quotes && data.quotes.length > 0) {
-            return data.quotes[0].symbol;
+        if (yahooData.quotes && yahooData.quotes.length > 0) {
+            return yahooData.quotes[0].symbol;
         }
     } catch (error) {
         console.error('Error searching stock:', error);
@@ -507,21 +519,116 @@ async function fetchStockData(symbol) {
     }
 
     try {
-        // Primary: Use Yahoo Finance API (free, no key required)
-        return await fetchStockDataYahoo(symbol);
+        // Primary: Use Finnhub API (free, CORS enabled, more reliable)
+        return await fetchStockDataFinnhub(symbol);
     } catch (error) {
-        console.error(`Error fetching Yahoo data for ${symbol}:`, error);
-        // Fallback: Try Alpha Vantage with demo key
+        console.error(`Error fetching Finnhub data for ${symbol}:`, error);
+        // Fallback: Try Yahoo Finance
         try {
-            return await fetchStockDataAlphaVantage(symbol);
+            return await fetchStockDataYahoo(symbol);
         } catch (error2) {
-            console.error(`Error fetching Alpha Vantage data for ${symbol}:`, error2);
-            return null;
+            console.error(`Error fetching Yahoo data for ${symbol}:`, error2);
+            // Last resort: Alpha Vantage
+            try {
+                return await fetchStockDataAlphaVantage(symbol);
+            } catch (error3) {
+                console.error(`Error fetching Alpha Vantage data for ${symbol}:`, error3);
+                return null;
+            }
         }
     }
 }
 
-// Primary: Yahoo Finance API (free, no key required)
+// Primary: Finnhub API (free, CORS enabled, reliable)
+async function fetchStockDataFinnhub(symbol) {
+    try {
+        // Finnhub free API key (60 calls/minute limit)
+        const apiKey = 'cmt8bq9r01qj8q8l8hkgcmt8bq9r01qj8q8l8hk0';
+        const baseUrl = 'https://finnhub.io/api/v1';
+        
+        // Fetch quote and company profile in parallel
+        const [quoteResponse, profileResponse, candleResponse] = await Promise.all([
+            fetch(`${baseUrl}/quote?symbol=${symbol}&token=${apiKey}`),
+            fetch(`${baseUrl}/stock/profile2?symbol=${symbol}&token=${apiKey}`),
+            fetch(`${baseUrl}/stock/candle?symbol=${symbol}&resolution=D&from=${Math.floor(Date.now() / 1000) - 90 * 24 * 60 * 60}&to=${Math.floor(Date.now() / 1000)}&token=${apiKey}`)
+        ]);
+        
+        if (!quoteResponse.ok || !profileResponse.ok) {
+            throw new Error('Finnhub API error');
+        }
+        
+        const quote = await quoteResponse.json();
+        const profile = await profileResponse.json();
+        const candle = candleResponse.ok ? await candleResponse.json() : { c: [] };
+        
+        const price = quote.c || quote.pc || 0; // current price or previous close
+        const previousClose = quote.pc || price;
+        const change = price - previousClose;
+        const changePercent = previousClose ? (change / previousClose) * 100 : 0;
+        
+        // Calculate 1W and 1M changes from candle data
+        let change1W = 0;
+        let change1M = 0;
+        const closes = candle.c || [];
+        const timestamps = candle.t || [];
+        
+        if (closes.length >= 5) {
+            const weekAgoPrice = closes[closes.length - 5];
+            if (weekAgoPrice) {
+                change1W = ((price - weekAgoPrice) / weekAgoPrice) * 100;
+            }
+        }
+        if (closes.length >= 20) {
+            const monthAgoPrice = closes[closes.length - 20];
+            if (monthAgoPrice) {
+                change1M = ((price - monthAgoPrice) / monthAgoPrice) * 100;
+            }
+        }
+        
+        // Build historical data
+        const historicalData = [];
+        for (let i = 0; i < timestamps.length; i++) {
+            if (closes[i] !== null && closes[i] !== undefined) {
+                historicalData.push({
+                    date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+                    close: closes[i]
+                });
+            }
+        }
+        
+        // Get 52W high from quote
+        const high52Week = quote.h || Math.max(...closes.filter(c => c)) || price;
+        
+        const stockData = {
+            symbol: symbol,
+            companyName: profile.name || symbol,
+            price: price,
+            change1D: changePercent,
+            change1W: change1W,
+            change1M: change1M,
+            sector: profile.finnhubIndustry || profile.industry || 'N/A',
+            peRatio: null, // Finnhub free tier doesn't include this
+            pegRatio: null,
+            eps: null,
+            dividendYield: null,
+            high52Week: high52Week,
+            historicalData: historicalData.slice(-30)
+        };
+        
+        // Cache the data
+        stockDataCache[cacheKey] = {
+            data: stockData,
+            timestamp: Date.now()
+        };
+        
+        return stockData;
+    } catch (error) {
+        console.error(`Error fetching Finnhub data for ${symbol}:`, error);
+        throw error;
+    }
+}
+
+// Fallback: Yahoo Finance API (free, no key required)
 async function fetchStockDataYahoo(symbol) {
     try {
         // Use multiple CORS proxies for reliability
