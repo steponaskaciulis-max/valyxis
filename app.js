@@ -4,6 +4,8 @@ let currentWatchlistId = null;
 let currentStockSymbol = null;
 let autoRefreshInterval = null;
 let stockDataCache = {};
+let sortState = { column: null, direction: 'asc' };
+let debounceTimer = null;
 
 // Initialize App
 document.addEventListener('DOMContentLoaded', () => {
@@ -15,7 +17,35 @@ function initializeApp() {
     setupWatchlists();
     setupModals();
     setupEventListeners();
+    setupKeyboardShortcuts();
     loadWatchlists();
+}
+
+// Keyboard Shortcuts
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd + K to focus search
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            const stockInput = document.getElementById('stock-input');
+            if (stockInput && document.getElementById('watchlist-detail-page').classList.contains('active')) {
+                stockInput.focus();
+            }
+        }
+        
+        // Escape to close modals
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal.active').forEach(modal => {
+                modal.classList.remove('active');
+            });
+        }
+        
+        // Ctrl/Cmd + R to refresh (prevent default browser refresh)
+        if ((e.ctrlKey || e.metaKey) && e.key === 'r' && document.getElementById('watchlist-detail-page').classList.contains('active')) {
+            e.preventDefault();
+            refreshStocks();
+        }
+    });
 }
 
 // Navigation
@@ -130,7 +160,9 @@ function setupWatchlists() {
     if (deleteBtn) {
         deleteBtn.addEventListener('click', () => {
             if (confirm('Are you sure you want to delete this watchlist?')) {
+                const watchlistName = watchlists.find(w => w.id === currentWatchlistId)?.name || 'Watchlist';
                 deleteWatchlist(currentWatchlistId);
+                showToast(`${watchlistName} deleted`, 'info');
                 navigateToPage('watchlists');
             }
         });
@@ -145,6 +177,7 @@ function createWatchlist(name) {
     };
     watchlists.push(newWatchlist);
     saveWatchlists();
+    showToast(`Watchlist "${name}" created`, 'success');
     loadWatchlists();
 }
 
@@ -153,6 +186,7 @@ function editWatchlistName(id, name) {
     if (watchlist) {
         watchlist.name = name;
         saveWatchlists();
+        showToast(`Watchlist renamed to "${name}"`, 'success');
         loadWatchlists();
         if (currentWatchlistId === id) {
             document.getElementById('watchlist-title').textContent = name;
@@ -213,8 +247,8 @@ function openWatchlist(id) {
     if (!watchlist) return;
 
     document.getElementById('watchlist-title').textContent = watchlist.name;
-    document.getElementById('stocks-container').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-
+    const container = document.getElementById('stocks-container');
+    
     // Show watchlist detail page
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById('watchlist-detail-page').classList.add('active');
@@ -236,7 +270,7 @@ function loadWatchlistStocks(stocks) {
         return;
     }
 
-    container.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    showSkeletonLoader(container, 'table');
 
     // Fetch all stock data in parallel
     Promise.all(stocks.map(symbol => fetchStockData(symbol).catch(err => {
@@ -254,6 +288,7 @@ function loadWatchlistStocks(stocks) {
                         <button class="btn btn-primary" onclick="refreshStocks()" style="margin-top: 1rem;">Retry</button>
                     </div>
                 `;
+                showToast('Failed to load stock data. Please try refreshing.', 'error');
             } else {
                 displayStocks(validResults);
             }
@@ -268,6 +303,7 @@ function loadWatchlistStocks(stocks) {
                     <button class="btn btn-primary" onclick="refreshStocks()" style="margin-top: 1rem;">Retry</button>
                 </div>
             `;
+            showToast('Error loading stocks. Please try again.', 'error');
         });
 }
 
@@ -284,29 +320,35 @@ function displayStocks(stocksData) {
         return;
     }
 
+    // Apply sorting if active
+    let sortedData = stocksData;
+    if (sortState.column) {
+        sortedData = sortTable(stocksData, sortState.column, sortState.direction);
+    }
+
     container.innerHTML = `
         <div class="stocks-table-wrapper">
             <table class="stocks-table">
                 <thead>
                     <tr>
-                        <th>Ticker</th>
-                        <th>Sector</th>
-                        <th>Price</th>
-                        <th>1D%</th>
-                        <th>1W%</th>
-                        <th>1M%</th>
-                        <th>P/E</th>
-                        <th>PEG</th>
-                        <th>EPS</th>
-                        <th>DIV %</th>
-                        <th>52W High</th>
-                        <th>Δ from 52W</th>
+                        <th class="sortable" data-column="ticker">Ticker</th>
+                        <th class="sortable" data-column="sector">Sector</th>
+                        <th class="sortable" data-column="price">Price</th>
+                        <th class="sortable" data-column="1d">1D%</th>
+                        <th class="sortable" data-column="1w">1W%</th>
+                        <th class="sortable" data-column="1m">1M%</th>
+                        <th class="sortable" data-column="pe">P/E</th>
+                        <th class="sortable" data-column="peg">PEG</th>
+                        <th class="sortable" data-column="eps">EPS</th>
+                        <th class="sortable" data-column="div">DIV %</th>
+                        <th class="sortable" data-column="52w">52W High</th>
+                        <th class="sortable" data-column="delta52w">Δ from 52W</th>
                         <th>Chart</th>
                         <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${stocksData.map(stock => {
+                    ${sortedData.map(stock => {
                         const change1D = stock.change1D || 0;
                         const change1W = stock.change1W || 0;
                         const change1M = stock.change1M || 0;
@@ -345,6 +387,33 @@ function displayStocks(stocksData) {
         </div>
     `;
 
+    // Add sort listeners to table headers
+    container.querySelectorAll('.stocks-table th.sortable').forEach(header => {
+        header.addEventListener('click', () => {
+            const column = header.getAttribute('data-column');
+            if (sortState.column === column) {
+                sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortState.column = column;
+                sortState.direction = 'asc';
+            }
+            
+            // Update header classes
+            container.querySelectorAll('.stocks-table th').forEach(th => {
+                th.classList.remove('sort-asc', 'sort-desc');
+            });
+            header.classList.add(`sort-${sortState.direction}`);
+            
+            // Re-render with sorted data
+            displayStocks(stocksData);
+        });
+        
+        // Set initial sort state
+        if (sortState.column === header.getAttribute('data-column')) {
+            header.classList.add(`sort-${sortState.direction}`);
+        }
+    });
+
     // Add click listeners for stock rows
     container.querySelectorAll('.stock-row').forEach(row => {
         row.addEventListener('click', (e) => {
@@ -362,6 +431,7 @@ function displayStocks(stocksData) {
             const symbol = btn.getAttribute('data-symbol');
             if (currentWatchlistId && confirm(`Remove ${symbol} from this watchlist?`)) {
                 removeStockFromWatchlist(currentWatchlistId, symbol);
+                showToast(`${symbol} removed from watchlist`, 'info');
                 refreshStocks();
             }
         });
@@ -398,6 +468,11 @@ function setupEventListeners() {
                 addStockToWatchlist();
             }
         });
+        
+        // Add debounced search suggestions (optional enhancement)
+        stockInput.addEventListener('input', debounce((e) => {
+            // Could add autocomplete here in the future
+        }, 300));
     }
 
     const refreshBtn = document.getElementById('refresh-stocks-btn');
@@ -431,11 +506,14 @@ function setupEventListeners() {
     if (removeStockBtn) {
         removeStockBtn.addEventListener('click', () => {
             if (currentStockSymbol && currentWatchlistId) {
-                removeStockFromWatchlist(currentWatchlistId, currentStockSymbol);
-                if (currentWatchlistId) {
-                    openWatchlist(currentWatchlistId);
-                } else {
-                    navigateToPage('watchlists');
+                if (confirm(`Remove ${currentStockSymbol} from this watchlist?`)) {
+                    removeStockFromWatchlist(currentWatchlistId, currentStockSymbol);
+                    showToast(`${currentStockSymbol} removed from watchlist`, 'info');
+                    if (currentWatchlistId) {
+                        openWatchlist(currentWatchlistId);
+                    } else {
+                        navigateToPage('watchlists');
+                    }
                 }
             }
         });
@@ -454,7 +532,7 @@ async function addStockToWatchlist() {
 
     // Check if stock already exists
     if (watchlist.stocks.includes(symbolOrName)) {
-        alert('Stock already in watchlist');
+        showToast('Stock already in watchlist', 'warning');
         return;
     }
 
@@ -480,13 +558,14 @@ async function addStockToWatchlist() {
             watchlist.stocks.push(stockData.symbol);
             saveWatchlists();
             input.value = '';
+            showToast(`${stockData.symbol} added successfully`, 'success');
             loadWatchlistStocks(watchlist.stocks);
         } else {
-            alert('Stock not found. Please check the ticker symbol or company name.');
+            showToast('Stock not found. Please check the ticker symbol or company name.', 'error');
         }
     } catch (error) {
         console.error('Error adding stock:', error);
-        alert('Error adding stock. Please try again.');
+        showToast('Error adding stock. Please try again.', 'error');
     } finally {
         input.disabled = false;
         addBtn.disabled = false;
@@ -506,6 +585,11 @@ function refreshStocks() {
     if (!currentWatchlistId) return;
     const watchlist = watchlists.find(w => w.id === currentWatchlistId);
     if (watchlist) {
+        // Clear cache to force fresh data
+        Object.keys(stockDataCache).forEach(key => {
+            delete stockDataCache[key];
+        });
+        showToast('Refreshing stock data...', 'info', 2000);
         loadWatchlistStocks(watchlist.stocks);
     }
 }
@@ -977,10 +1061,12 @@ async function openStockDetail(symbol) {
             displayStockDetail(stockData);
         } else {
             container.innerHTML = '<div class="empty-state"><p>Unable to load stock data</p></div>';
+            showToast('Unable to load stock data', 'error');
         }
     } catch (error) {
         console.error('Error loading stock detail:', error);
         container.innerHTML = '<div class="empty-state"><p>Error loading stock data</p></div>';
+        showToast('Error loading stock data', 'error');
     }
 }
 
@@ -1342,6 +1428,104 @@ function setupModals() {
     });
 }
 
+// Toast Notification System
+function showToast(message, type = 'info', duration = 3000) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    
+    const icons = {
+        success: '✅',
+        error: '❌',
+        warning: '⚠️',
+        info: 'ℹ️'
+    };
+
+    toast.innerHTML = `
+        <span class="toast-icon">${icons[type] || icons.info}</span>
+        <div class="toast-content">
+            <div class="toast-title">${type.charAt(0).toUpperCase() + type.slice(1)}</div>
+            <div class="toast-message">${escapeHtml(message)}</div>
+        </div>
+        <button class="toast-close" aria-label="Close notification">&times;</button>
+    `;
+
+    const closeBtn = toast.querySelector('.toast-close');
+    closeBtn.addEventListener('click', () => {
+        toast.style.animation = 'fadeOut 0.3s ease-in forwards';
+        setTimeout(() => toast.remove(), 300);
+    });
+
+    container.appendChild(toast);
+
+    // Auto remove after duration
+    setTimeout(() => {
+        if (toast.parentNode) {
+            toast.style.animation = 'fadeOut 0.3s ease-in forwards';
+            setTimeout(() => toast.remove(), 300);
+        }
+    }, duration);
+}
+
+// Skeleton Loader
+function showSkeletonLoader(container, type = 'table') {
+    if (type === 'table') {
+        container.innerHTML = `
+            <div class="stocks-table-wrapper">
+                <table class="stocks-table">
+                    <thead>
+                        <tr>
+                            <th>Ticker</th>
+                            <th>Sector</th>
+                            <th>Price</th>
+                            <th>1D%</th>
+                            <th>1W%</th>
+                            <th>1M%</th>
+                            <th>P/E</th>
+                            <th>PEG</th>
+                            <th>EPS</th>
+                            <th>DIV %</th>
+                            <th>52W High</th>
+                            <th>Δ from 52W</th>
+                            <th>Chart</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${Array(5).fill(0).map(() => `
+                            <tr class="skeleton-table-row">
+                                ${Array(14).fill(0).map(() => '<td><div class="skeleton skeleton-text"></div></td>').join('')}
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (type === 'cards') {
+        container.innerHTML = Array(6).fill(0).map(() => `
+            <div class="skeleton-card">
+                <div class="skeleton skeleton-title"></div>
+                <div class="skeleton skeleton-text"></div>
+                <div class="skeleton skeleton-text" style="width: 80%;"></div>
+            </div>
+        `).join('');
+    }
+}
+
+// Debounce Function
+function debounce(func, wait) {
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(debounceTimer);
+            func(...args);
+        };
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(later, wait);
+    };
+}
+
 // Utility Functions
 function saveWatchlists() {
     localStorage.setItem('valyxis_watchlists', JSON.stringify(watchlists));
@@ -1356,5 +1540,77 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Sort Table Function
+function sortTable(stocksData, column, direction) {
+    const sorted = [...stocksData];
+    
+    sorted.sort((a, b) => {
+        let aVal, bVal;
+        
+        switch(column) {
+            case 'ticker':
+                aVal = a.symbol || '';
+                bVal = b.symbol || '';
+                break;
+            case 'sector':
+                aVal = a.sector || '';
+                bVal = b.sector || '';
+                break;
+            case 'price':
+                aVal = a.price || 0;
+                bVal = b.price || 0;
+                break;
+            case '1d':
+                aVal = a.change1D || 0;
+                bVal = b.change1D || 0;
+                break;
+            case '1w':
+                aVal = a.change1W || 0;
+                bVal = b.change1W || 0;
+                break;
+            case '1m':
+                aVal = a.change1M || 0;
+                bVal = b.change1M || 0;
+                break;
+            case 'pe':
+                aVal = a.peRatio || 0;
+                bVal = b.peRatio || 0;
+                break;
+            case 'peg':
+                aVal = a.pegRatio || 0;
+                bVal = b.pegRatio || 0;
+                break;
+            case 'eps':
+                aVal = a.eps || 0;
+                bVal = b.eps || 0;
+                break;
+            case 'div':
+                aVal = a.dividendYield || 0;
+                bVal = b.dividendYield || 0;
+                break;
+            case '52w':
+                aVal = a.high52Week || 0;
+                bVal = b.high52Week || 0;
+                break;
+            case 'delta52w':
+                aVal = ((a.price / a.high52Week - 1) * 100) || 0;
+                bVal = ((b.price / b.high52Week - 1) * 100) || 0;
+                break;
+            default:
+                return 0;
+        }
+        
+        if (typeof aVal === 'string') {
+            return direction === 'asc' 
+                ? aVal.localeCompare(bVal)
+                : bVal.localeCompare(aVal);
+        }
+        
+        return direction === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+    
+    return sorted;
 }
 

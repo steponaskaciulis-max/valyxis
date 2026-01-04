@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Valyxis - Professional stock market watchlist application with real-time data, advanced charts, and comprehensive analytics">
+    <meta name="keywords" content="stock market, watchlist, stocks, finance, trading, portfolio">
+    <meta name="author" content="Valyxis">
+    <meta name="theme-color" content="#0a0e27">
     <title>Valyxis - Professional Stock Watch</title>
     <style>
         /* Force dark theme immediately - no white backgrounds */
@@ -41,6 +45,7 @@
             font-size: 2rem;
             background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             font-weight: 800;
         }
@@ -68,6 +73,7 @@
             margin-bottom: 1rem;
             background: linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
         .hero-subtitle {
@@ -123,14 +129,14 @@
 </head>
 <body>
     <!-- Navigation -->
-    <nav class="navbar">
+    <nav class="navbar" role="navigation" aria-label="Main navigation">
         <div class="nav-container">
             <div class="nav-brand">
                 <h1>Valyxis</h1>
             </div>
             <div class="nav-links">
-                <a href="#home" class="nav-link active" data-page="home">Home</a>
-                <a href="#watchlists" class="nav-link" data-page="watchlists">Watchlists</a>
+                <a href="#home" class="nav-link active" data-page="home" aria-label="Home page">Home</a>
+                <a href="#watchlists" class="nav-link" data-page="watchlists" aria-label="Watchlists page">Watchlists</a>
             </div>
         </div>
     </nav>
@@ -216,8 +222,8 @@
                 </div>
             </div>
             <div class="add-stock-section">
-                <input type="text" id="stock-input" placeholder="Enter ticker symbol or company name (e.g., AAPL, Apple)" class="stock-input">
-                <button class="btn btn-primary" id="add-stock-btn">Add Stock</button>
+                <input type="text" id="stock-input" placeholder="Enter ticker symbol or company name (e.g., AAPL, Apple)" class="stock-input" aria-label="Stock ticker or company name input" autocomplete="off">
+                <button class="btn btn-primary" id="add-stock-btn" aria-label="Add stock to watchlist">Add Stock</button>
             </div>
             <div id="stocks-container" class="stocks-grid">
                 <!-- Stocks will be dynamically added here -->
@@ -273,6 +279,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
     <script src="/app.js?v=4" type="text/javascript"></script>
 </body>
