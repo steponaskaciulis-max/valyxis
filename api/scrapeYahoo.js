@@ -31,19 +31,41 @@ export default async function handler(req, res) {
         const html = await response.text();
         
         // Extract data from the page
-        // Yahoo Finance embeds data in JSON-LD and script tags
+        // Yahoo Finance embeds data in multiple ways
         const data = {};
         
-        // Try to find the JSON data embedded in the page
-        const jsonMatch = html.match(/root\.App\.main\s*=\s*({.+?});/s);
+        // Method 1: Try to find the JSON data embedded in root.App.main
+        let jsonMatch = html.match(/root\.App\.main\s*=\s*({.+?});/s);
+        if (!jsonMatch) {
+            // Try alternative pattern
+            jsonMatch = html.match(/window\.__PRELOADED_STATE__\s*=\s*({.+?});/s);
+        }
+        if (!jsonMatch) {
+            // Try another pattern
+            jsonMatch = html.match(/__PRELOADED_STATE__\s*=\s*({.+?});/s);
+        }
+        
         if (jsonMatch) {
             try {
                 const jsonData = JSON.parse(jsonMatch[1]);
-                const context = jsonData?.context?.dispatcher?.stores;
                 
-                if (context?.QuoteSummaryStore?.quoteSummary?.result?.[0]) {
-                    const result = context.QuoteSummaryStore.quoteSummary.result[0];
-                    
+                // Try multiple paths to find the data
+                let result = null;
+                
+                // Path 1: context.dispatcher.stores.QuoteSummaryStore
+                if (jsonData?.context?.dispatcher?.stores?.QuoteSummaryStore?.quoteSummary?.result?.[0]) {
+                    result = jsonData.context.dispatcher.stores.QuoteSummaryStore.quoteSummary.result[0];
+                }
+                // Path 2: quoteSummary.result[0]
+                else if (jsonData?.quoteSummary?.result?.[0]) {
+                    result = jsonData.quoteSummary.result[0];
+                }
+                // Path 3: result[0]
+                else if (jsonData?.result?.[0]) {
+                    result = jsonData.result[0];
+                }
+                
+                if (result) {
                     // Extract all the data we need
                     data.sector = result.summaryProfile?.sector || 
                                  result.assetProfile?.sector || 
@@ -62,8 +84,10 @@ export default async function handler(req, res) {
                     if (result.summaryDetail?.dividendYield !== null && result.summaryDetail?.dividendYield !== undefined) {
                         data.dividendYield = result.summaryDetail.dividendYield * 100;
                     } else if (result.summaryDetail?.dividendRate) {
-                        const price = result.price?.regularMarketPrice?.raw || result.price?.regularMarketPrice;
-                        if (price) {
+                        const price = result.price?.regularMarketPrice?.raw || 
+                                     result.price?.regularMarketPrice ||
+                                     result.regularMarketPrice;
+                        if (price && price > 0) {
                             data.dividendYield = (result.summaryDetail.dividendRate / price) * 100;
                         }
                     }
@@ -73,9 +97,10 @@ export default async function handler(req, res) {
             }
         }
         
-        // Fallback: Try to extract from meta tags and other patterns
+        // Method 2: Try to extract from HTML patterns as fallback
         if (!data.sector) {
-            const sectorMatch = html.match(/<span[^>]*>Sector<\/span>[^<]*<span[^>]*>([^<]+)<\/span>/i);
+            const sectorMatch = html.match(/Sector[^>]*>([^<]+)</i) || 
+                               html.match(/<td[^>]*>Sector<\/td>\s*<td[^>]*>([^<]+)<\/td>/i);
             if (sectorMatch) {
                 data.sector = sectorMatch[1].trim();
             }
