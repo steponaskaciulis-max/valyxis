@@ -702,46 +702,84 @@ async function parseYahooData(data, symbol) {
         }
     }
 
-    // Fetch additional company info - BLOCKING to ensure we have all data
+    // Fetch additional company info from Yahoo Finance - BLOCKING to ensure we have all data
     let sector = 'N/A';
     let peRatio = null;
     let pegRatio = null;
     let eps = null;
     let dividendYield = null;
     
-    // Try Yahoo Finance quoteSummary first
+    // Use Yahoo Finance quoteSummary - this has ALL the data we need
     try {
-        const baseUrl = window.location.origin;
-        const summaryUrl = `${baseUrl}/api/quoteSummary?symbol=${symbol}`;
-        let summaryResponse;
+        const proxy = 'https://api.allorigins.win/raw?url=';
+        // Get comprehensive data from Yahoo Finance
+        const yahooSummaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData,assetProfile,summaryDetail`;
         
-        try {
-            summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(6000) });
-        } catch (e) {
-            const proxy = 'https://api.allorigins.win/raw?url=';
-            const yahooSummaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData,assetProfile`;
-            summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { signal: AbortSignal.timeout(6000) });
-        }
+        const summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { 
+            signal: AbortSignal.timeout(10000) 
+        });
         
         if (summaryResponse && summaryResponse.ok) {
             let summaryDataRaw = await summaryResponse.json();
-            const summaryData = summaryDataRaw.contents ? JSON.parse(summaryDataRaw.contents) : summaryDataRaw;
+            let summaryData;
             
-            if (summaryData.quoteSummary?.result?.[0]) {
-                const summary = summaryData.quoteSummary.result[0];
-                sector = summary.summaryProfile?.sector || summary.assetProfile?.sector || 'N/A';
-                peRatio = summary.defaultKeyStatistics?.trailingPE || summary.defaultKeyStatistics?.forwardPE || null;
-                pegRatio = summary.defaultKeyStatistics?.pegRatio || null;
-                eps = summary.defaultKeyStatistics?.trailingEps || summary.defaultKeyStatistics?.forwardEps || null;
-                dividendYield = summary.summaryDetail?.dividendYield ? summary.summaryDetail.dividendYield * 100 : null;
+            // Handle allorigins wrapper
+            if (summaryDataRaw.contents) {
+                try {
+                    summaryData = typeof summaryDataRaw.contents === 'string' 
+                        ? JSON.parse(summaryDataRaw.contents) 
+                        : summaryDataRaw.contents;
+                } catch (e) {
+                    summaryData = summaryDataRaw;
+                }
+            } else {
+                summaryData = summaryDataRaw;
+            }
+            
+            if (summaryData && summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
+                const result = summaryData.quoteSummary.result[0];
+                
+                // Get sector
+                sector = result.summaryProfile?.sector || 
+                        result.assetProfile?.sector || 
+                        result.summaryProfile?.industry || 
+                        'N/A';
+                
+                // Get P/E Ratio
+                peRatio = result.defaultKeyStatistics?.trailingPE || 
+                         result.defaultKeyStatistics?.forwardPE ||
+                         result.defaultKeyStatistics?.priceToBook ||
+                         null;
+                
+                // Get PEG Ratio
+                pegRatio = result.defaultKeyStatistics?.pegRatio || null;
+                
+                // Get EPS
+                eps = result.defaultKeyStatistics?.trailingEps || 
+                     result.defaultKeyStatistics?.forwardEps ||
+                     result.defaultKeyStatistics?.earningsQuarterlyGrowth ||
+                     null;
+                
+                // Get Dividend Yield
+                if (result.summaryDetail?.dividendYield) {
+                    dividendYield = result.summaryDetail.dividendYield * 100;
+                } else if (result.summaryDetail?.dividendRate && price) {
+                    dividendYield = (result.summaryDetail.dividendRate / price) * 100;
+                } else {
+                    dividendYield = null;
+                }
+                
+                console.log(`Yahoo Finance data for ${symbol}:`, {
+                    sector, peRatio, pegRatio, eps, dividendYield
+                });
             }
         }
     } catch (e) {
-        console.log('Yahoo summary fetch failed, trying Alpha Vantage');
+        console.error('Yahoo Finance quoteSummary fetch failed:', e);
     }
     
-    // If still missing data, try Alpha Vantage
-    if (sector === 'N/A' || !peRatio || !eps || !pegRatio || !dividendYield) {
+    // If still missing data, try Alpha Vantage as fallback
+    if ((sector === 'N/A' || !peRatio || !eps || !pegRatio || !dividendYield) && price > 0) {
         try {
             const apiKey = 'demo';
             const overviewUrl = `https://www.alphavantage.co/query?function=OVERVIEW&symbol=${symbol}&apikey=${apiKey}`;
@@ -752,7 +790,7 @@ async function parseYahooData(data, symbol) {
                 const responseData = await response.json();
                 const overviewData = responseData.contents ? JSON.parse(responseData.contents) : responseData;
                 
-                if (overviewData && !overviewData.Note) { // Alpha Vantage returns Note on rate limit
+                if (overviewData && !overviewData.Note && !overviewData['Error Message']) {
                     if (overviewData.Sector && sector === 'N/A') {
                         sector = overviewData.Sector;
                     }
@@ -772,24 +810,6 @@ async function parseYahooData(data, symbol) {
             }
         } catch (e) {
             console.log('Alpha Vantage fetch failed:', e);
-        }
-    }
-    
-    // Try Finnhub as another source
-    if (!peRatio || !eps || !dividendYield) {
-        try {
-            const finnhubKey = 'cmt8bq9r01qj8q8l8hkgcmt8bq9r01qj8q8l8hk0';
-            const finnhubUrl = `https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${finnhubKey}`;
-            const response = await fetch(finnhubUrl, { signal: AbortSignal.timeout(5000) });
-            
-            if (response.ok) {
-                const profile = await response.json();
-                if (profile && profile.finnhubIndustry && sector === 'N/A') {
-                    sector = profile.finnhubIndustry;
-                }
-            }
-        } catch (e) {
-            // Silently fail
         }
     }
     
