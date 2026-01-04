@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: valyxis
+    env: node
+    buildCommand: echo "No build needed"
+    startCommand: npx serve -s . -l 10000
+    envVars:
+      - key: NODE_ENV
+        value: production
+

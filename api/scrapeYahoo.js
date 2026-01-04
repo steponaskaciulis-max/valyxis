@@ -16,12 +16,47 @@ export default async function handler(req, res) {
     }
 
     try {
-        // Scrape Yahoo Finance quote page
+        // First, try the API directly (more reliable)
+        const apiUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData,assetProfile,summaryDetail`;
+        let apiResponse;
+        
+        try {
+            apiResponse = await fetch(apiUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/json'
+                }
+            });
+            
+            if (apiResponse.ok) {
+                const apiData = await apiResponse.json();
+                if (apiData && apiData.quoteSummary && apiData.quoteSummary.result && apiData.quoteSummary.result[0]) {
+                    const result = apiData.quoteSummary.result[0];
+                    const stats = result.defaultKeyStatistics || {};
+                    const detail = result.summaryDetail || {};
+                    
+                    return res.status(200).json({
+                        sector: result.summaryProfile?.sector || result.assetProfile?.sector || null,
+                        peRatio: stats.trailingPE || stats.forwardPE || null,
+                        pegRatio: stats.pegRatio || null,
+                        eps: stats.trailingEps || stats.forwardEps || null,
+                        dividendYield: detail.dividendYield ? detail.dividendYield * 100 : (detail.dividendRate ? null : null)
+                    });
+                }
+            }
+        } catch (apiError) {
+            console.log('Direct API failed, trying scraping:', apiError);
+        }
+        
+        // Fallback: Scrape Yahoo Finance quote page
         const url = `https://finance.yahoo.com/quote/${symbol}`;
         const response = await fetch(url, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9'
+            },
+            signal: AbortSignal.timeout(10000)
         });
 
         if (!response.ok) {
