@@ -709,36 +709,40 @@ async function parseYahooData(data, symbol) {
     let eps = null;
     let dividendYield = null;
     
-    // Use Yahoo Finance quoteSummary - try serverless function first, then direct
+    // Scrape Yahoo Finance directly from their website
     try {
         const baseUrl = window.location.origin;
-        const summaryUrl = `${baseUrl}/api/quoteSummary?symbol=${symbol}`;
-        let summaryResponse;
-        let summaryData;
+        const scrapeUrl = `${baseUrl}/api/scrapeYahoo?symbol=${symbol}`;
         
-        // Try serverless function first
-        try {
-            summaryResponse = await fetch(summaryUrl, { signal: AbortSignal.timeout(8000) });
-            if (summaryResponse && summaryResponse.ok) {
-                summaryData = await summaryResponse.json();
-            }
-        } catch (e) {
-            console.log('Serverless function failed, trying direct proxy');
+        const scrapeResponse = await fetch(scrapeUrl, { signal: AbortSignal.timeout(15000) });
+        
+        if (scrapeResponse && scrapeResponse.ok) {
+            const scrapedData = await scrapeResponse.json();
+            
+            if (scrapedData.sector) sector = scrapedData.sector;
+            if (scrapedData.peRatio !== null && scrapedData.peRatio !== undefined) peRatio = scrapedData.peRatio;
+            if (scrapedData.pegRatio !== null && scrapedData.pegRatio !== undefined) pegRatio = scrapedData.pegRatio;
+            if (scrapedData.eps !== null && scrapedData.eps !== undefined) eps = scrapedData.eps;
+            if (scrapedData.dividendYield !== null && scrapedData.dividendYield !== undefined) dividendYield = scrapedData.dividendYield;
+            
+            console.log(`Scraped data for ${symbol}:`, scrapedData);
         }
+    } catch (e) {
+        console.log('Scraping failed, trying API method:', e);
         
-        // Fallback to direct proxy
-        if (!summaryData) {
+        // Fallback to API method
+        try {
             const proxy = 'https://api.allorigins.win/raw?url=';
             const yahooSummaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=summaryProfile,defaultKeyStatistics,financialData,assetProfile,summaryDetail`;
             
-            summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { 
+            const summaryResponse = await fetch(proxy + encodeURIComponent(yahooSummaryUrl), { 
                 signal: AbortSignal.timeout(10000) 
             });
             
             if (summaryResponse && summaryResponse.ok) {
                 let summaryDataRaw = await summaryResponse.json();
+                let summaryData;
                 
-                // Handle allorigins wrapper
                 if (summaryDataRaw.contents) {
                     try {
                         summaryData = typeof summaryDataRaw.contents === 'string' 
@@ -750,73 +754,36 @@ async function parseYahooData(data, symbol) {
                 } else {
                     summaryData = summaryDataRaw;
                 }
+                
+                if (summaryData && summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
+                    const result = summaryData.quoteSummary.result[0];
+                    const stats = result.defaultKeyStatistics || {};
+                    const detail = result.summaryDetail || {};
+                    
+                    if (result.summaryProfile?.sector) sector = result.summaryProfile.sector;
+                    if (stats.trailingPE !== null && stats.trailingPE !== undefined && stats.trailingPE !== 0) {
+                        peRatio = stats.trailingPE;
+                    } else if (stats.forwardPE !== null && stats.forwardPE !== undefined && stats.forwardPE !== 0) {
+                        peRatio = stats.forwardPE;
+                    }
+                    if (stats.pegRatio !== null && stats.pegRatio !== undefined && stats.pegRatio !== 0) {
+                        pegRatio = stats.pegRatio;
+                    }
+                    if (stats.trailingEps !== null && stats.trailingEps !== undefined && stats.trailingEps !== 0) {
+                        eps = stats.trailingEps;
+                    } else if (stats.forwardEps !== null && stats.forwardEps !== undefined && stats.forwardEps !== 0) {
+                        eps = stats.forwardEps;
+                    }
+                    if (detail.dividendYield !== null && detail.dividendYield !== undefined) {
+                        dividendYield = detail.dividendYield * 100;
+                    } else if (detail.dividendRate !== null && detail.dividendRate !== undefined && price && price > 0) {
+                        dividendYield = (detail.dividendRate / price) * 100;
+                    }
+                }
             }
+        } catch (apiError) {
+            console.error('API method also failed:', apiError);
         }
-        
-        if (summaryData && summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
-            const result = summaryData.quoteSummary.result[0];
-            
-            // Get sector - use real data only
-            if (result.summaryProfile?.sector) {
-                sector = result.summaryProfile.sector;
-            } else if (result.assetProfile?.sector) {
-                sector = result.assetProfile.sector;
-            }
-            
-            // Debug: Log the entire result structure
-            console.log(`Yahoo Finance FULL result for ${symbol}:`, JSON.stringify(result, null, 2));
-            
-            // Get P/E Ratio - check all possible fields, handle 0 values
-            const stats = result.defaultKeyStatistics || {};
-            if (stats.trailingPE !== null && stats.trailingPE !== undefined && stats.trailingPE !== 0) {
-                peRatio = stats.trailingPE;
-            } else if (stats.forwardPE !== null && stats.forwardPE !== undefined && stats.forwardPE !== 0) {
-                peRatio = stats.forwardPE;
-            }
-            
-            // Get PEG Ratio - check raw value
-            if (stats.pegRatio !== null && stats.pegRatio !== undefined && stats.pegRatio !== 0) {
-                pegRatio = stats.pegRatio;
-            }
-            
-            // Get EPS - check all possible fields
-            if (stats.trailingEps !== null && stats.trailingEps !== undefined && stats.trailingEps !== 0) {
-                eps = stats.trailingEps;
-            } else if (stats.forwardEps !== null && stats.forwardEps !== undefined && stats.forwardEps !== 0) {
-                eps = stats.forwardEps;
-            }
-            
-            // Get Dividend Yield - check multiple sources
-            const detail = result.summaryDetail || {};
-            if (detail.dividendYield !== null && detail.dividendYield !== undefined) {
-                dividendYield = detail.dividendYield * 100;
-            } else if (detail.dividendRate !== null && detail.dividendRate !== undefined && price && price > 0) {
-                dividendYield = (detail.dividendRate / price) * 100;
-            } else if (detail.dividendYield === 0 || detail.dividendRate === 0) {
-                dividendYield = 0; // Explicitly 0, not missing
-            }
-            
-            // Also check financialData module for additional metrics
-            const financial = result.financialData || {};
-            if (!peRatio && financial.currentPrice && financial.currentPrice > 0 && eps && eps > 0) {
-                peRatio = financial.currentPrice / eps;
-            }
-            
-            console.log(`Extracted data for ${symbol}:`, {
-                sector,
-                peRatio,
-                pegRatio,
-                eps,
-                dividendYield,
-                statsKeys: Object.keys(stats),
-                detailKeys: Object.keys(detail),
-                financialKeys: Object.keys(financial)
-            });
-        } else {
-            console.log(`No Yahoo Finance data found for ${symbol}`);
-        }
-    } catch (e) {
-        console.error('Yahoo Finance quoteSummary fetch failed:', e);
     }
     
     // If still missing data, try Alpha Vantage as fallback

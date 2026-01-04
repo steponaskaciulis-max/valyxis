@@ -2,6 +2,18 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/api/scrapeYahoo",
+      "destination": "/api/scrapeYahoo.js"
+    },
+    {
+      "source": "/api/quoteSummary",
+      "destination": "/api/quoteSummary.js"
+    },
+    {
+      "source": "/api/stock",
+      "destination": "/api/stock.js"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
