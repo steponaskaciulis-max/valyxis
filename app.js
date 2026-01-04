@@ -756,37 +756,47 @@ async function parseYahooData(data, symbol) {
         if (summaryData && summaryData.quoteSummary && summaryData.quoteSummary.result && summaryData.quoteSummary.result[0]) {
             const result = summaryData.quoteSummary.result[0];
             
-            // Get sector
-            sector = result.summaryProfile?.sector || 
-                    result.assetProfile?.sector || 
-                    result.summaryProfile?.industry || 
-                    'N/A';
-            
-            // Get P/E Ratio
-            peRatio = result.defaultKeyStatistics?.trailingPE || 
-                     result.defaultKeyStatistics?.forwardPE ||
-                     null;
-            
-            // Get PEG Ratio
-            pegRatio = result.defaultKeyStatistics?.pegRatio || null;
-            
-            // Get EPS
-            eps = result.defaultKeyStatistics?.trailingEps || 
-                 result.defaultKeyStatistics?.forwardEps ||
-                 null;
-            
-            // Get Dividend Yield
-            if (result.summaryDetail?.dividendYield) {
-                dividendYield = result.summaryDetail.dividendYield * 100;
-            } else if (result.summaryDetail?.dividendRate && price) {
-                dividendYield = (result.summaryDetail.dividendRate / price) * 100;
-            } else {
-                dividendYield = null;
+            // Get sector - use real data only
+            if (result.summaryProfile?.sector) {
+                sector = result.summaryProfile.sector;
+            } else if (result.assetProfile?.sector) {
+                sector = result.assetProfile.sector;
             }
             
-            console.log(`Yahoo Finance data for ${symbol}:`, {
-                sector, peRatio, pegRatio, eps, dividendYield
+            // Get P/E Ratio - prefer trailing, then forward
+            if (result.defaultKeyStatistics?.trailingPE !== null && result.defaultKeyStatistics?.trailingPE !== undefined) {
+                peRatio = result.defaultKeyStatistics.trailingPE;
+            } else if (result.defaultKeyStatistics?.forwardPE !== null && result.defaultKeyStatistics?.forwardPE !== undefined) {
+                peRatio = result.defaultKeyStatistics.forwardPE;
+            }
+            
+            // Get PEG Ratio - only use if it exists
+            if (result.defaultKeyStatistics?.pegRatio !== null && result.defaultKeyStatistics?.pegRatio !== undefined) {
+                pegRatio = result.defaultKeyStatistics.pegRatio;
+            }
+            
+            // Get EPS - prefer trailing, then forward
+            if (result.defaultKeyStatistics?.trailingEps !== null && result.defaultKeyStatistics?.trailingEps !== undefined) {
+                eps = result.defaultKeyStatistics.trailingEps;
+            } else if (result.defaultKeyStatistics?.forwardEps !== null && result.defaultKeyStatistics?.forwardEps !== undefined) {
+                eps = result.defaultKeyStatistics.forwardEps;
+            }
+            
+            // Get Dividend Yield - use real calculation
+            if (result.summaryDetail?.dividendYield !== null && result.summaryDetail?.dividendYield !== undefined) {
+                dividendYield = result.summaryDetail.dividendYield * 100;
+            } else if (result.summaryDetail?.dividendRate !== null && result.summaryDetail?.dividendRate !== undefined && price) {
+                dividendYield = (result.summaryDetail.dividendRate / price) * 100;
+            } else if (result.summaryDetail?.dividendRate === 0 || result.summaryDetail?.dividendYield === 0) {
+                dividendYield = 0; // Explicitly 0, not missing
+            }
+            
+            console.log(`Yahoo Finance RAW data for ${symbol}:`, {
+                rawResult: result,
+                extracted: { sector, peRatio, pegRatio, eps, dividendYield }
             });
+        } else {
+            console.log(`No Yahoo Finance data found for ${symbol}`);
         }
     } catch (e) {
         console.error('Yahoo Finance quoteSummary fetch failed:', e);
@@ -827,26 +837,16 @@ async function parseYahooData(data, symbol) {
         }
     }
     
-    // Calculate missing values from available data
-    if (!peRatio && eps && price && eps > 0 && !isNaN(eps)) {
+    // Calculate missing values ONLY from real data (not estimates)
+    // Only calculate if we have one but not the other
+    if (peRatio === null && eps !== null && eps !== undefined && price && eps > 0 && !isNaN(eps)) {
         peRatio = price / eps;
+        console.log(`Calculated P/E from EPS for ${symbol}: ${peRatio}`);
     }
     
-    if (!eps && peRatio && price && peRatio > 0 && !isNaN(peRatio)) {
+    if (eps === null && peRatio !== null && peRatio !== undefined && price && peRatio > 0 && !isNaN(peRatio)) {
         eps = price / peRatio;
-    }
-    
-    // If still no P/E or EPS, use industry averages based on price
-    if (!peRatio && !eps) {
-        // Estimate EPS based on price range (very rough)
-        if (price < 50) {
-            eps = price / 15; // Lower P/E for smaller stocks
-        } else if (price < 200) {
-            eps = price / 25; // Medium P/E
-        } else {
-            eps = price / 30; // Higher P/E for expensive stocks
-        }
-        peRatio = price / eps;
+        console.log(`Calculated EPS from P/E for ${symbol}: ${eps}`);
     }
     
     // Try to get sector from company name if still N/A
@@ -869,58 +869,12 @@ async function parseYahooData(data, symbol) {
         }
     }
     
-    // Estimate PEG if we have P/E but not PEG
-    // PEG = P/E / (Annual EPS Growth Rate)
-    if (!pegRatio && peRatio && peRatio > 0) {
-        // Try to estimate from 1M change
-        if (change1M !== 0 && Math.abs(change1M) < 50) {
-            const estimatedAnnualGrowth = Math.abs(change1M) * 12; // Annualize monthly change
-            if (estimatedAnnualGrowth > 1 && estimatedAnnualGrowth < 100) {
-                pegRatio = peRatio / estimatedAnnualGrowth;
-            }
-        }
-        // If still no PEG, use a default estimate based on P/E
-        if (!pegRatio || isNaN(pegRatio)) {
-            // Rough estimate: PEG typically ranges from 0.5 to 3 for most stocks
-            // Use P/E / 8 as a reasonable estimate (assumes 12.5% growth)
-            pegRatio = peRatio / 8;
-            if (pegRatio < 0.3) pegRatio = 0.3;
-            if (pegRatio > 4) pegRatio = 4;
-        }
-    }
+    // DON'T estimate PEG - only use real data or leave as null
+    // PEG is rarely available and estimates are unreliable
     
-    // Ensure PEG is always set if we have P/E
-    if (!pegRatio && peRatio && peRatio > 0) {
-        pegRatio = peRatio / 8; // Default estimate
-    }
-    
-    // Estimate dividend yield if missing (very rough - based on sector averages)
-    if (!dividendYield || dividendYield === 0) {
-        if (sector !== 'N/A') {
-            const sectorAverages = {
-                'Technology': 0.5,
-                'Financial Services': 2.5,
-                'Healthcare': 1.8,
-                'Energy': 4.0,
-                'Consumer Cyclical': 1.2,
-                'Communication Services': 2.0,
-                'Industrials': 1.5,
-                'Consumer Defensive': 2.2,
-                'Utilities': 3.5,
-                'Real Estate': 3.0
-            };
-            dividendYield = sectorAverages[sector] || 1.0;
-        } else {
-            // Default to 0.5% if no sector info
-            dividendYield = 0.5;
-        }
-    }
-    
-    // Ensure all values are numbers, not null
-    if (peRatio === null || isNaN(peRatio)) peRatio = null;
-    if (pegRatio === null || isNaN(pegRatio)) pegRatio = null;
-    if (eps === null || isNaN(eps)) eps = null;
-    if (dividendYield === null || isNaN(dividendYield)) dividendYield = 0.5;
+    // DON'T estimate dividend yield - only use real data or leave as null
+    // If dividendYield is 0, that's valid (no dividend)
+    // Only set to null if truly missing
 
     const high52Week = meta.fiftyTwoWeekHigh || (historicalData.length > 0 ? Math.max(...historicalData.map(d => d.close)) : price);
 
