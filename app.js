@@ -763,37 +763,54 @@ async function parseYahooData(data, symbol) {
                 sector = result.assetProfile.sector;
             }
             
-            // Get P/E Ratio - prefer trailing, then forward
-            if (result.defaultKeyStatistics?.trailingPE !== null && result.defaultKeyStatistics?.trailingPE !== undefined) {
-                peRatio = result.defaultKeyStatistics.trailingPE;
-            } else if (result.defaultKeyStatistics?.forwardPE !== null && result.defaultKeyStatistics?.forwardPE !== undefined) {
-                peRatio = result.defaultKeyStatistics.forwardPE;
+            // Debug: Log the entire result structure
+            console.log(`Yahoo Finance FULL result for ${symbol}:`, JSON.stringify(result, null, 2));
+            
+            // Get P/E Ratio - check all possible fields, handle 0 values
+            const stats = result.defaultKeyStatistics || {};
+            if (stats.trailingPE !== null && stats.trailingPE !== undefined && stats.trailingPE !== 0) {
+                peRatio = stats.trailingPE;
+            } else if (stats.forwardPE !== null && stats.forwardPE !== undefined && stats.forwardPE !== 0) {
+                peRatio = stats.forwardPE;
             }
             
-            // Get PEG Ratio - only use if it exists
-            if (result.defaultKeyStatistics?.pegRatio !== null && result.defaultKeyStatistics?.pegRatio !== undefined) {
-                pegRatio = result.defaultKeyStatistics.pegRatio;
+            // Get PEG Ratio - check raw value
+            if (stats.pegRatio !== null && stats.pegRatio !== undefined && stats.pegRatio !== 0) {
+                pegRatio = stats.pegRatio;
             }
             
-            // Get EPS - prefer trailing, then forward
-            if (result.defaultKeyStatistics?.trailingEps !== null && result.defaultKeyStatistics?.trailingEps !== undefined) {
-                eps = result.defaultKeyStatistics.trailingEps;
-            } else if (result.defaultKeyStatistics?.forwardEps !== null && result.defaultKeyStatistics?.forwardEps !== undefined) {
-                eps = result.defaultKeyStatistics.forwardEps;
+            // Get EPS - check all possible fields
+            if (stats.trailingEps !== null && stats.trailingEps !== undefined && stats.trailingEps !== 0) {
+                eps = stats.trailingEps;
+            } else if (stats.forwardEps !== null && stats.forwardEps !== undefined && stats.forwardEps !== 0) {
+                eps = stats.forwardEps;
             }
             
-            // Get Dividend Yield - use real calculation
-            if (result.summaryDetail?.dividendYield !== null && result.summaryDetail?.dividendYield !== undefined) {
-                dividendYield = result.summaryDetail.dividendYield * 100;
-            } else if (result.summaryDetail?.dividendRate !== null && result.summaryDetail?.dividendRate !== undefined && price) {
-                dividendYield = (result.summaryDetail.dividendRate / price) * 100;
-            } else if (result.summaryDetail?.dividendRate === 0 || result.summaryDetail?.dividendYield === 0) {
+            // Get Dividend Yield - check multiple sources
+            const detail = result.summaryDetail || {};
+            if (detail.dividendYield !== null && detail.dividendYield !== undefined) {
+                dividendYield = detail.dividendYield * 100;
+            } else if (detail.dividendRate !== null && detail.dividendRate !== undefined && price && price > 0) {
+                dividendYield = (detail.dividendRate / price) * 100;
+            } else if (detail.dividendYield === 0 || detail.dividendRate === 0) {
                 dividendYield = 0; // Explicitly 0, not missing
             }
             
-            console.log(`Yahoo Finance RAW data for ${symbol}:`, {
-                rawResult: result,
-                extracted: { sector, peRatio, pegRatio, eps, dividendYield }
+            // Also check financialData module for additional metrics
+            const financial = result.financialData || {};
+            if (!peRatio && financial.currentPrice && financial.currentPrice > 0 && eps && eps > 0) {
+                peRatio = financial.currentPrice / eps;
+            }
+            
+            console.log(`Extracted data for ${symbol}:`, {
+                sector,
+                peRatio,
+                pegRatio,
+                eps,
+                dividendYield,
+                statsKeys: Object.keys(stats),
+                detailKeys: Object.keys(detail),
+                financialKeys: Object.keys(financial)
             });
         } else {
             console.log(`No Yahoo Finance data found for ${symbol}`);
